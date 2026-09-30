@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ESergi.Api/ESergi.Api.csproj" />
+  <Project Path="ESergi.Mobile/ESergi.Mobile.csproj" />
+</Solution>
