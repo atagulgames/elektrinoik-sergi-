@@ -16,7 +16,12 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         if (device.Length == 0) { device = Guid.NewGuid().ToString("N"); Preferences.Default.Set("esergi-device", device); }
         var top = new Grid { Padding = 18, BackgroundColor = Color.FromArgb("#163D35"), ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) } };
-        var brand = new VerticalStackLayout(); brand.Add(new Label { Text = "E-SERGİ", FontSize = 25, FontAttributes = FontAttributes.Bold, TextColor = Colors.White }); brand.Add(new Label { Text = "Öğrenci eserleri galerisi", TextColor = Color.FromArgb("#D2E5D9") }); top.Add(brand);
+        var brand = new HorizontalStackLayout { Spacing = 10, VerticalOptions = LayoutOptions.Center };
+        brand.Add(new Image { Source = "esergi_logo.png", WidthRequest = 62, HeightRequest = 62, Aspect = Aspect.AspectFit });
+        var brandText = new VerticalStackLayout { VerticalOptions = LayoutOptions.Center };
+        brandText.Add(new Label { Text = "E-SERGİ", FontSize = 25, FontAttributes = FontAttributes.Bold, TextColor = Colors.White });
+        brandText.Add(new Label { Text = "Öğrenci eserleri galerisi", FontSize = 12, TextColor = Color.FromArgb("#D2E5D9") });
+        brand.Add(brandText); top.Add(brand);
         var admin = new Button { Text = "Yönetim", BackgroundColor = Color.FromArgb("#D6A85F"), TextColor = Color.FromArgb("#173E36") }; admin.Clicked += AdminClicked; top.Add(admin, 1, 0);
         grade.SelectedIndexChanged += async (_, _) => await Load(); section.SelectedIndexChanged += async (_, _) => await Load();
         var filters = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 8 }; filters.Add(grade); filters.Add(section, 1, 0);
