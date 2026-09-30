@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 namespace ESergi.Mobile;
 public partial class MainPage : ContentPage
 {
-    const string Api = "https://e-sergi-api.onrender.com";
+    const string Api = "https://elektrinoik-sergi.onrender.com";
     static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(60) };
     readonly VerticalStackLayout list = new() { Spacing = 14 };
     readonly Label status = new() { Text = "Sergiler yükleniyor…", TextColor = Color.FromArgb("#60736B") };
