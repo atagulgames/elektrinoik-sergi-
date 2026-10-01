@@ -16,12 +16,15 @@ Atlas bağlantı parolası sohbet içinde paylaşıldı. Atlas → Security → 
 
 Render ücretsiz sunucusu boşta kalınca uyur; ilk istek yavaş olabilir. SignalR bağlantısı otomatik yeniden bağlanır.
 
-## Android uygulaması
+## Android uygulamaları
 
-`ESergi.Mobile/MainPage.xaml.cs` içindeki `Api` sabitini Render adresiyle değiştir. Visual Studio'da `ESergi.slnx` aç, `ESergi.Mobile` başlangıç projesini seç ve Android Emulator veya USB hata ayıklaması açık Android telefonda çalıştır.
+Öğrenci uygulaması ve yönetim uygulaması ayrı Android paketleri olarak üretilir. Admin APK'sı yalnızca admin girişi, ekleme, düzenleme ve silme ekranlarını içerir; öğrenci APK'sı yalnızca sergi ve puanlamayı gösterir.
 
 ```powershell
-dotnet publish .\ESergi.Mobile\ESergi.Mobile.csproj -f net10.0-android -c Release
+dotnet publish .\ESergi.Mobile\ESergi.Mobile.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk
+dotnet publish .\ESergi.Admin\ESergi.Admin.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk
 ```
+
+İmzalı APK dosyaları `ESergi.Mobile/bin/Release/net10.0-android/publish/com.esergi.android-Signed.apk` ve `ESergi.Admin/bin/Release/net10.0-android/publish/com.esergi.admin-Signed.apk` konumlarında oluşur. Her iki APK ARM 32/64-bit ve x86 32/64-bit mimarileri içerir. Admin panelinde eser başına 1–3 görsel yüklenebilir; mobil galeride görseller 3 saniyede bir sırayla değişir ve dokunulduğunda tam ekran açılır.
 
 Admin giriş bilgileri yalnız Render ortam değişkenlerinde tutulur. Puanlama cihaz başına eser başına tek kayıt tutar; yeni puan eski puanın yerini alır. Uygulamayı kaldırıp yeniden kurmak yeni cihaz kimliği oluşturur.

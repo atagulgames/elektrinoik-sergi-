@@ -6,6 +6,8 @@ using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 40 * 1024 * 1024);
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options => options.MultipartBodyLengthLimit = 40 * 1024 * 1024);
 builder.Services.AddSignalR();
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyHeader().AllowAnyMethod().SetIsOriginAllowed(_ => true).AllowCredentials()));
 var mongoUri = builder.Configuration["MONGODB_URI"] ?? throw new InvalidOperationException("MONGODB_URI ortam değişkeni gerekli.");
@@ -44,13 +46,14 @@ app.MapPost("/api/artworks", async (HttpRequest req, IConfiguration cfg, IHubCon
     if (!Admin(req, cfg)) return Results.Unauthorized();
     if (cloud is null) return Results.Problem("Cloudinary ayarları yapılmamış.", statusCode: 503);
     if (!req.HasFormContentType) return Results.BadRequest("multipart/form-data gerekli.");
-    var form = await req.ReadFormAsync(); var image = form.Files.GetFile("image");
-    if (image is null || image.Length == 0 || image.Length > 10 * 1024 * 1024) return Results.BadRequest("10 MB altındaki bir görsel seçin.");
+    var form = await req.ReadFormAsync(); var images = form.Files.GetFiles("images").ToList();
+    if (images.Count == 0 && form.Files.GetFile("image") is { } legacyImage) images.Add(legacyImage);
+    if (images.Count is < 1 or > 3 || images.Any(x => x.Length == 0 || x.Length > 10 * 1024 * 1024)) return Results.BadRequest("1-3 arası, her biri 10 MB altındaki görselleri seçin.");
     var grade = form["classGrade"].ToString(); var section = form["section"].ToString().ToUpperInvariant();
     if (!new[] { "9", "10", "11", "12" }.Contains(grade) || section.Length != 1 || !"ABCDEFG".Contains(section)) return Results.BadRequest("Sınıf veya şube geçersiz.");
-    var up = await cloud.UploadAsync(new ImageUploadParams { File = new FileDescription(image.FileName, image.OpenReadStream()), Folder = "e-sergi" });
-    if (up.Error is not null) return Results.Problem(up.Error.Message, statusCode: 502);
-    var item = new Artwork { ArtworkName = form["artworkName"].ToString().Trim(), StudentName = form["studentName"].ToString().Trim(), ClassGrade = grade, Section = section, Description = form["description"].ToString().Trim(), ImageUrl = up.SecureUrl?.ToString() ?? "", EventDate = ParseDate(form["eventDate"]), CreatedAt = DateTime.UtcNow };
+    var urls = new List<string>();
+    foreach (var file in images) { var up = await cloud.UploadAsync(new ImageUploadParams { File = new FileDescription(file.FileName, file.OpenReadStream()), Folder = "e-sergi" }); if (up.Error is not null) return Results.Problem(up.Error.Message, statusCode: 502); if (up.SecureUrl is not null) urls.Add(up.SecureUrl.ToString()); }
+    var item = new Artwork { ArtworkName = form["artworkName"].ToString().Trim(), StudentName = form["studentName"].ToString().Trim(), ClassGrade = grade, Section = section, Description = form["description"].ToString().Trim(), ImageUrl = urls[0], ImageUrls = urls, EventDate = ParseDate(form["eventDate"]), CreatedAt = DateTime.UtcNow };
     if (string.IsNullOrWhiteSpace(item.ArtworkName) || string.IsNullOrWhiteSpace(item.StudentName)) return Results.BadRequest("Eser adı ve öğrenci adı zorunludur.");
     await artworks.InsertOneAsync(item); var view = await ViewOf(item, votes);
     await hub.Clients.All.SendAsync("ArtworkChanged", new { type = "created", artwork = view });
@@ -62,7 +65,9 @@ app.MapPut("/api/artworks/{id}", async (string id, HttpRequest req, IConfigurati
     var item = await artworks.Find(x => x.Id == id).FirstOrDefaultAsync(); if (item is null) return Results.NotFound();
     var f = await req.ReadFormAsync();
     item.ArtworkName = f["artworkName"].ToString().Trim(); item.StudentName = f["studentName"].ToString().Trim(); item.ClassGrade = f["classGrade"].ToString(); item.Section = f["section"].ToString().ToUpperInvariant(); item.Description = f["description"].ToString().Trim(); item.EventDate = ParseDate(f["eventDate"]);
-    var image = f.Files.GetFile("image"); if (image is not null && image.Length > 0) { if (cloud is null) return Results.Problem("Cloudinary ayarı yok.", statusCode: 503); var up = await cloud.UploadAsync(new ImageUploadParams { File = new FileDescription(image.FileName, image.OpenReadStream()), Folder = "e-sergi" }); if (up.Error is not null) return Results.Problem(up.Error.Message, statusCode: 502); item.ImageUrl = up.SecureUrl?.ToString() ?? item.ImageUrl; }
+    var images = f.Files.GetFiles("images").ToList(); if (images.Count == 0 && f.Files.GetFile("image") is { } legacyImage) images.Add(legacyImage);
+    if (images.Count > 3 || images.Any(x => x.Length == 0 || x.Length > 10 * 1024 * 1024)) return Results.BadRequest("En fazla 3 görsel, her biri 10 MB altı olabilir.");
+    if (images.Count > 0) { if (cloud is null) return Results.Problem("Cloudinary ayarı yok.", statusCode: 503); var urls = new List<string>(); foreach (var image in images) { var up = await cloud.UploadAsync(new ImageUploadParams { File = new FileDescription(image.FileName, image.OpenReadStream()), Folder = "e-sergi" }); if (up.Error is not null) return Results.Problem(up.Error.Message, statusCode: 502); if (up.SecureUrl is not null) urls.Add(up.SecureUrl.ToString()); } item.ImageUrls = urls; item.ImageUrl = urls[0]; }
     await artworks.ReplaceOneAsync(x => x.Id == id, item); var view = await ViewOf(item, votes); await hub.Clients.All.SendAsync("ArtworkChanged", new { type = "updated", artwork = view }); return Results.Ok(view);
 }).DisableAntiforgery();
 app.MapDelete("/api/artworks/{id}", async (string id, HttpRequest req, IConfiguration cfg, IHubContext<ExhibitionHub> hub) =>
@@ -82,10 +87,10 @@ app.Run();
 static bool Admin(HttpRequest r, IConfiguration c) => !string.IsNullOrWhiteSpace(c["ADMIN_API_KEY"]) && Eq(r.Headers["X-Admin-Key"].ToString(), c["ADMIN_API_KEY"]!);
 static bool Eq(string a, string b) => System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
 static DateTime ParseDate(string? s) => DateTime.TryParse(s, out var d) ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : DateTime.UtcNow;
-static async Task<ArtworkView> ViewOf(Artwork x, IMongoCollection<Vote> votes) { var v = await votes.Find(q => q.ArtworkId == x.Id).ToListAsync(); return new(x.Id!, x.ArtworkName, x.StudentName, x.ClassGrade, x.Section, x.Description, x.ImageUrl, x.EventDate, v.Count == 0 ? 0 : Math.Round(v.Average(q => q.Score), 1), v.Count); }
+static async Task<ArtworkView> ViewOf(Artwork x, IMongoCollection<Vote> votes) { var v = await votes.Find(q => q.ArtworkId == x.Id).ToListAsync(); var urls = x.ImageUrls is { Count: > 0 } ? x.ImageUrls : (string.IsNullOrWhiteSpace(x.ImageUrl) ? new List<string>() : new List<string> { x.ImageUrl }); return new(x.Id!, x.ArtworkName, x.StudentName, x.ClassGrade, x.Section, x.Description, urls.FirstOrDefault() ?? "", urls, x.EventDate, v.Count == 0 ? 0 : Math.Round(v.Average(q => q.Score), 1), v.Count); }
 public sealed class ExhibitionHub : Hub { }
 public sealed record AdminLogin(string Username, string Password);
 public sealed record RatingInput(int Score, string DeviceId);
-public sealed record ArtworkView(string Id, string ArtworkName, string StudentName, string ClassGrade, string Section, string Description, string ImageUrl, DateTime EventDate, double AverageRating, int RatingCount);
-public sealed class Artwork { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkName { get; set; } = ""; public string StudentName { get; set; } = ""; public string ClassGrade { get; set; } = ""; public string Section { get; set; } = ""; public string Description { get; set; } = ""; public string ImageUrl { get; set; } = ""; public DateTime EventDate { get; set; } public DateTime CreatedAt { get; set; } }
+public sealed record ArtworkView(string Id, string ArtworkName, string StudentName, string ClassGrade, string Section, string Description, string ImageUrl, List<string> ImageUrls, DateTime EventDate, double AverageRating, int RatingCount);
+public sealed class Artwork { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkName { get; set; } = ""; public string StudentName { get; set; } = ""; public string ClassGrade { get; set; } = ""; public string Section { get; set; } = ""; public string Description { get; set; } = ""; public string ImageUrl { get; set; } = ""; public List<string> ImageUrls { get; set; } = []; public DateTime EventDate { get; set; } public DateTime CreatedAt { get; set; } }
 public sealed class Vote { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkId { get; set; } = ""; public string DeviceId { get; set; } = ""; public int Score { get; set; } public DateTime UpdatedAt { get; set; } }

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <Shell
-    x:Class="ESergi.Mobile.AppShell"
+    x:Class="ESergi.Admin.AppShell"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-    xmlns:local="clr-namespace:ESergi.Mobile"
-    Title="E-Sergi">
+    xmlns:local="clr-namespace:ESergi.Admin"
+    Title="ESergi.Admin">
 
     <ShellContent
         Shell.NavBarIsVisible="False"

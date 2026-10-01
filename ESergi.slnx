@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="ESergi.Api/ESergi.Api.csproj" />
   <Project Path="ESergi.Mobile/ESergi.Mobile.csproj" />
+  <Project Path="ESergi.Admin/ESergi.Admin.csproj" />
 </Solution>
