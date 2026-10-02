@@ -24,7 +24,7 @@ if (!string.IsNullOrWhiteSpace(cloudName) && !string.IsNullOrWhiteSpace(cloudKey
 var app = builder.Build();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapHub<ExhibitionHub>("/live/exhibitions");
-app.MapGet("/api/artworks", async (string? grade, string? section, int? skip, int? take, HttpResponse response) =>
+app.MapGet("/api/artworks", async (string? grade, string? section, int? skip, int? take, string? deviceId, HttpResponse response) =>
 {
     var f = Builders<Artwork>.Filter.Empty;
     if (!string.IsNullOrWhiteSpace(grade)) f &= Builders<Artwork>.Filter.Eq(x => x.ClassGrade, grade);
@@ -39,6 +39,12 @@ app.MapGet("/api/artworks", async (string? grade, string? section, int? skip, in
         .Group(x => x.ArtworkId, group => new RatingSummary(group.Key, group.Average(v => (double)v.Score), group.Count()))
         .ToListAsync();
     var byArtwork = stats.ToDictionary(x => x.ArtworkId);
+    Dictionary<string, double> myScores = [];
+    if (!string.IsNullOrWhiteSpace(deviceId) && deviceId.Length <= 100 && allIds.Length > 0)
+    {
+        myScores = (await votes.Find(x => x.DeviceId == deviceId && allIds.Contains(x.ArtworkId)).ToListAsync())
+            .ToDictionary(x => x.ArtworkId, x => x.Score);
+    }
     var ranked = keys
         .Where(x => byArtwork.ContainsKey(x.Id))
         .OrderByDescending(x => byArtwork[x.Id].AverageRating)
@@ -52,7 +58,7 @@ app.MapGet("/api/artworks", async (string? grade, string? section, int? skip, in
     var pageIds = orderedKeys.Select(x => x.Id).ToArray();
     var page = pageIds.Length == 0 ? [] : await artworks.Find(Builders<Artwork>.Filter.In(x => x.Id, pageIds)).ToListAsync();
     var byId = page.ToDictionary(x => x.Id!);
-    var result = pageIds.Where(byId.ContainsKey).Select(id => ViewOf(byId[id], byArtwork.GetValueOrDefault(id), rankById.GetValueOrDefault(id))).ToList();
+    var result = pageIds.Where(byId.ContainsKey).Select(id => ViewOf(byId[id], byArtwork.GetValueOrDefault(id), rankById.GetValueOrDefault(id), myScores.TryGetValue(id, out var ownScore) ? ownScore : null)).ToList();
     return Results.Ok(result);
 });
 app.MapPost("/api/admin/login", (AdminLogin input, IConfiguration c) =>
@@ -106,7 +112,7 @@ app.MapDelete("/api/artworks/{id}", async (string id, HttpRequest req, IConfigur
 });
 app.MapPost("/api/artworks/{id}/ratings", async (string id, RatingInput input, IHubContext<ExhibitionHub> hub) =>
 {
-    if (input.Score is < 1 or > 5 || string.IsNullOrWhiteSpace(input.DeviceId) || input.DeviceId.Length > 100) return Results.BadRequest("1-5 puan ve cihaz kimliği gerekli.");
+    if (!double.IsFinite(input.Score) || input.Score is < 0 or > 5 || Math.Round(input.Score, 1) != input.Score || string.IsNullOrWhiteSpace(input.DeviceId) || input.DeviceId.Length > 100) return Results.BadRequest("0-5 arası, en fazla bir ondalık basamaklı puan ve cihaz kimliği gerekli.");
     var item = await artworks.Find(x => x.Id == id).FirstOrDefaultAsync(); if (item is null) return Results.NotFound();
     // Insert-only voting plus the unique (ArtworkId, DeviceId) index makes one vote per
     // device/artwork enforceable atomically, including concurrent requests.
@@ -125,16 +131,16 @@ app.Run();
 static bool Admin(HttpRequest r, IConfiguration c) => !string.IsNullOrWhiteSpace(c["ADMIN_API_KEY"]) && Eq(r.Headers["X-Admin-Key"].ToString(), c["ADMIN_API_KEY"]!);
 static bool Eq(string a, string b) => System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
 static DateTime ParseDate(string? s) => DateTime.TryParse(s, out var d) ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : DateTime.UtcNow;
-static ArtworkView ViewOf(Artwork x, RatingSummary? stats, int rank = 0) { var urls = x.ImageUrls is { Count: > 0 } ? x.ImageUrls : (string.IsNullOrWhiteSpace(x.ImageUrl) ? new List<string>() : new List<string> { x.ImageUrl }); return new(x.Id!, x.ArtworkName, x.StudentName, x.ClassGrade, x.Section, x.Description, urls.FirstOrDefault() ?? "", urls, x.EventDate, stats is null ? 0 : Math.Round(stats.AverageRating, 1), stats?.Count ?? 0, rank); }
+static ArtworkView ViewOf(Artwork x, RatingSummary? stats, int rank = 0, double? myScore = null) { var urls = x.ImageUrls is { Count: > 0 } ? x.ImageUrls : (string.IsNullOrWhiteSpace(x.ImageUrl) ? new List<string>() : new List<string> { x.ImageUrl }); return new(x.Id!, x.ArtworkName, x.StudentName, x.ClassGrade, x.Section, x.Description, urls.FirstOrDefault() ?? "", urls, x.EventDate, stats is null ? 0 : Math.Round(stats.AverageRating, 1), stats?.Count ?? 0, rank, myScore); }
 static async Task<RatingSummary?> RatingFor(string artworkId, IMongoCollection<Vote> votes) => await votes.Aggregate()
     .Match(x => x.ArtworkId == artworkId)
     .Group(x => x.ArtworkId, group => new RatingSummary(group.Key, group.Average(v => (double)v.Score), group.Count()))
     .FirstOrDefaultAsync();
 public sealed class ExhibitionHub : Hub { }
 public sealed record AdminLogin(string Username, string Password);
-public sealed record RatingInput(int Score, string DeviceId);
+public sealed record RatingInput(double Score, string DeviceId);
 public sealed record RatingSummary(string ArtworkId, double AverageRating, int Count);
 public sealed record ArtworkSortKey(string Id, DateTime CreatedAt);
-public sealed record ArtworkView(string Id, string ArtworkName, string StudentName, string ClassGrade, string Section, string Description, string ImageUrl, List<string> ImageUrls, DateTime EventDate, double AverageRating, int RatingCount, int Rank = 0);
+public sealed record ArtworkView(string Id, string ArtworkName, string StudentName, string ClassGrade, string Section, string Description, string ImageUrl, List<string> ImageUrls, DateTime EventDate, double AverageRating, int RatingCount, int Rank = 0, double? MyScore = null);
 public sealed class Artwork { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkName { get; set; } = ""; public string StudentName { get; set; } = ""; public string ClassGrade { get; set; } = ""; public string Section { get; set; } = ""; public string Description { get; set; } = ""; public string ImageUrl { get; set; } = ""; public List<string> ImageUrls { get; set; } = []; public DateTime EventDate { get; set; } public DateTime CreatedAt { get; set; } }
-public sealed class Vote { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkId { get; set; } = ""; public string DeviceId { get; set; } = ""; public int Score { get; set; } public DateTime UpdatedAt { get; set; } }
+public sealed class Vote { [BsonId, BsonRepresentation(BsonType.ObjectId)] public string? Id { get; set; } public string ArtworkId { get; set; } = ""; public string DeviceId { get; set; } = ""; public double Score { get; set; } public DateTime UpdatedAt { get; set; } }

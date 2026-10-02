@@ -432,6 +432,7 @@ public partial class MainPage : ContentPage
     private async Task<(List<Artwork> Rows, int Total)> FetchPage(int skip)
     {
         var query = new List<string> { $"skip={skip}", $"take={PageSize}" };
+        query.Add("deviceId=" + Uri.EscapeDataString(device));
         if (grade.SelectedItem is string g) query.Add("grade=" + Uri.EscapeDataString(g));
         if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
         using var response = await Client.GetAsync($"{Api}/api/artworks?{string.Join("&", query)}");
@@ -510,8 +511,8 @@ public partial class MainPage : ContentPage
     {
         var content = new VerticalStackLayout { Spacing = 7 };
         var photos = item.ImageUrls is { Count: > 0 } ? item.ImageUrls : (string.IsNullOrWhiteSpace(item.ImageUrl) ? [] : new List<string> { item.ImageUrl });
-        var image = new Image { Source = CachedImageSource(photos.FirstOrDefault()), HeightRequest = 145, Aspect = Aspect.AspectFill };
-        var imageFrame = new Border { Padding = 0, Stroke = Colors.Transparent, StrokeShape = new RoundRectangle { CornerRadius = 15 }, Content = image, HeightRequest = 145 };
+        var image = new Image { Source = CachedImageSource(photos.FirstOrDefault()), HeightRequest = 184, Aspect = Aspect.AspectFit, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh") };
+        var imageFrame = new Border { Padding = 6, Stroke = Colors.Transparent, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), StrokeShape = new RoundRectangle { CornerRadius = 16 }, Content = image, HeightRequest = 184 };
         var tapImage = new TapGestureRecognizer();
         tapImage.Tapped += async (_, _) => await OpenPreview(item);
         imageFrame.GestureRecognizers.Add(tapImage);
@@ -550,13 +551,17 @@ public partial class MainPage : ContentPage
             content.Add(badge);
         }
         content.Add(ratingRow);
-        var rateRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, ColumnSpacing = 1 };
-        rateRow.Add(new Label { Text = "Puanla", FontSize = 10, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center });
-        var rateButton = new Button { Text = "★  Puan ver", FontSize = 12, Padding = new Thickness(12, 4), HeightRequest = 48, CornerRadius = 16, BackgroundColor = ThemePalette.Get("PrimaryContainer"), TextColor = ThemePalette.Get("OnPrimaryContainer") };
-        AutomationProperties.SetName(rateButton, $"{item.ArtworkName} eserini puanla");
+        var rateButton = new Button
+        {
+            Text = item.MyScore is double ownScore ? $"✓  Puanlandı ({ownScore.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)})" : "★  Bu sergiyi puanla",
+            FontSize = 12, Padding = new Thickness(12, 4), HeightRequest = 48, CornerRadius = 16,
+            BackgroundColor = item.MyScore.HasValue ? ThemePalette.Get("SecondaryContainer") : ThemePalette.Get("PrimaryContainer"),
+            TextColor = item.MyScore.HasValue ? ThemePalette.Get("OnSecondaryContainer") : ThemePalette.Get("OnPrimaryContainer"),
+            IsEnabled = !item.MyScore.HasValue
+        };
+        AutomationProperties.SetName(rateButton, item.MyScore is double own ? $"Bu cihazın verdiği puan {own:0.0}" : $"{item.ArtworkName} eserini puanla");
         rateButton.Clicked += async (_, _) => await ChooseRating(item);
-        rateRow.Add(rateButton, 1, 0);
-        content.Add(rateRow);
+        content.Add(rateButton);
         return new Border
         {
             Padding = 10,
@@ -603,7 +608,7 @@ public partial class MainPage : ContentPage
         Content = new Label { Text = glyph, FontSize = size, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Margin = 0, Padding = 0 }
     };
 
-    private async Task Rate(Artwork item, int score)
+    private async Task Rate(Artwork item, double score)
     {
         try
         {
@@ -631,9 +636,16 @@ public partial class MainPage : ContentPage
                         System.Net.HttpStatusCode.ServiceUnavailable => "Sunucu şu an hizmet veremiyor. Biraz sonra tekrar dene.",
                         _ => $"Sunucu {((int)response.StatusCode)} yanıtı verdi. {details}"
                     };
+                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                    {
+                        await Load();
+                    }
                     await DisplayAlertAsync("Puan gönderilemedi", message, "Tamam");
                     return;
                 }
+                var result = await response.Content.ReadFromJsonAsync<RatingResult>();
+                item.MyScore = score;
+                if (result is not null) { item.AverageRating = result.AverageRating; item.RatingCount = result.RatingCount; }
             }
             await Load();
         }
@@ -644,11 +656,18 @@ public partial class MainPage : ContentPage
 
     private async Task ChooseRating(Artwork item)
     {
-        var options = new[] { "1 yıldız", "2 yıldız", "3 yıldız", "4 yıldız", "5 yıldız" };
-        var choice = await DisplayActionSheetAsync("Eseri puanla", "Vazgeç", null, options);
-        var score = Array.IndexOf(options, choice) + 1;
-        if (score > 0) await Rate(item, score);
+        if (item.MyScore.HasValue)
+        {
+            await DisplayAlertAsync("Zaten puanlandı", $"Bu sergiye daha önce {item.MyScore.Value:0.0} puan verdin. Her cihaz bu sergiye yalnızca bir kez puan verebilir.", "Tamam");
+            return;
+        }
+
+        var proceed = await DisplayAlertAsync("Tek oy hakkı", "Bu sergi için yalnızca bir kez puan verebilirsiniz. Puanınızı gönderdikten sonra değiştiremezsiniz.", "Devam et", "İptal");
+        if (!proceed) return;
+        await Navigation.PushModalAsync(new RatingPickerPage(item, Rate));
     }
+
+    internal sealed class RatingResult { public double AverageRating { get; set; } public int RatingCount { get; set; } }
 
     internal sealed class Artwork
     {
@@ -664,6 +683,60 @@ public partial class MainPage : ContentPage
         public double AverageRating { get; set; }
         public int RatingCount { get; set; }
         public int Rank { get; set; }
+        public double? MyScore { get; set; }
+    }
+}
+
+internal sealed class RatingPickerPage : ContentPage
+{
+    private readonly MainPage.Artwork artwork;
+    private readonly Func<MainPage.Artwork, double, Task> submit;
+    private double value = 3.0;
+    private readonly Label valueLabel;
+
+    public RatingPickerPage(MainPage.Artwork item, Func<MainPage.Artwork, double, Task> submitRating)
+    {
+        artwork = item;
+        submit = submitRating;
+        BackgroundColor = Colors.Black.WithAlpha(0.38f);
+        valueLabel = new Label { Text = value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture), FontSize = 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, WidthRequest = 110 };
+
+        var minus = new Button { Text = "−", FontSize = 28, WidthRequest = 56, HeightRequest = 56, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSecondaryContainer") };
+        var plus = new Button { Text = "+", FontSize = 25, WidthRequest = 56, HeightRequest = 56, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSecondaryContainer") };
+        minus.Clicked += (_, _) => SetValue(value - 0.1);
+        plus.Clicked += (_, _) => SetValue(value + 0.1);
+        SemanticProperties.SetDescription(minus, "Puanı onda bir azalt");
+        SemanticProperties.SetDescription(plus, "Puanı onda bir artır");
+        var stepper = new HorizontalStackLayout { Spacing = 14, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { minus, valueLabel, plus } };
+
+        var cancel = new Button { Text = "İptal", HeightRequest = 52, CornerRadius = 17, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), TextColor = ThemePalette.Get("OnSurface") };
+        cancel.Clicked += async (_, _) => await Navigation.PopModalAsync();
+        var confirm = new Button { Text = "Puanı gönder", HeightRequest = 52, CornerRadius = 17, BackgroundColor = ThemePalette.Get("Primary"), TextColor = ThemePalette.Get("OnPrimary"), FontAttributes = FontAttributes.Bold };
+        confirm.Clicked += async (_, _) =>
+        {
+            confirm.IsEnabled = false;
+            confirm.Text = "Gönderiliyor…";
+            await submit(artwork, Math.Round(value, 1));
+            if (artwork.MyScore.HasValue) await Navigation.PopModalAsync();
+            else { confirm.IsEnabled = true; confirm.Text = "Puanı gönder"; }
+        };
+
+        var panel = new VerticalStackLayout { Padding = new Thickness(24), Spacing = 18, VerticalOptions = LayoutOptions.Center };
+        panel.Add(new Label { Text = "Puanını belirle", FontSize = 22, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center });
+        panel.Add(new Label { Text = artwork.ArtworkName, FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center, MaxLines = 2, LineBreakMode = LineBreakMode.TailTruncation });
+        panel.Add(new Label { Text = "0,0 – 5,0 arası · 0,1 puan adımı", FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
+        panel.Add(stepper);
+        panel.Add(new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 12, Children = { cancel, confirm } });
+        Grid.SetColumn(confirm, 1);
+        var card = new Border { Padding = 0, BackgroundColor = ThemePalette.Get("Surface"), Stroke = ThemePalette.Get("OutlineVariant"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 28 }, Content = panel, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Center };
+        var root = new Grid { Padding = new Thickness(20, 24), Children = { card } };
+        Content = root;
+    }
+
+    private void SetValue(double next)
+    {
+        value = Math.Clamp(Math.Round(next, 1), 0, 5);
+        valueLabel.Text = value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
     }
 }
 
@@ -711,8 +784,26 @@ internal sealed class ArtworkDetailPage : ContentPage
 
         var metadata = new Label { Text = $"{item.ClassGrade}-{item.Section}  ·  {item.StudentName}  ·  {item.EventDate:dd.MM.yyyy}", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant") };
         var description = new Label { Text = string.IsNullOrWhiteSpace(item.Description) ? "Bu eser için açıklama eklenmemiş." : item.Description, FontSize = 15, LineHeight = 1.4, TextColor = ThemePalette.Get("OnSurface") };
-        var ratingButton = new Button { Text = "★  Eseri puanla", HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("Primary"), TextColor = ThemePalette.Get("OnPrimary"), FontAttributes = FontAttributes.Bold };
-        ratingButton.Clicked += async (_, _) => await rate(artwork);
+        var ratingButton = new Button
+        {
+            Text = artwork.MyScore is double ownScore ? $"✓  Puanlandı ({ownScore.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)})" : "★  Bu sergiyi puanla",
+            HeightRequest = 52, CornerRadius = 18,
+            BackgroundColor = artwork.MyScore.HasValue ? ThemePalette.Get("SecondaryContainer") : ThemePalette.Get("Primary"),
+            TextColor = artwork.MyScore.HasValue ? ThemePalette.Get("OnSecondaryContainer") : ThemePalette.Get("OnPrimary"),
+            FontAttributes = FontAttributes.Bold,
+            IsEnabled = !artwork.MyScore.HasValue
+        };
+        ratingButton.Clicked += async (_, _) =>
+        {
+            await rate(artwork);
+            if (artwork.MyScore is double score)
+            {
+                ratingButton.Text = $"✓  Puanlandı ({score.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)})";
+                ratingButton.IsEnabled = false;
+                ratingButton.BackgroundColor = ThemePalette.Get("SecondaryContainer");
+                ratingButton.TextColor = ThemePalette.Get("OnSecondaryContainer");
+            }
+        };
         var info = new VerticalStackLayout { Padding = new Thickness(18, 16), Spacing = 12 };
         info.Add(new Label { Text = item.ArtworkName, FontSize = 24, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
         info.Add(metadata);

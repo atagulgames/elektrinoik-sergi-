@@ -12,13 +12,13 @@
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
     <ApplicationTitle>E-Sergi Yönetim</ApplicationTitle>
     <ApplicationId>com.esergi.admin</ApplicationId>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.1</ApplicationDisplayVersion>
+    <ApplicationVersion>5</ApplicationVersion>
     <SupportedOSPlatformVersion>21.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <ItemGroup>
-    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#163D35" />
-    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#163D35" BaseSize="128,128" />
+    <MauiIcon Include="Resources\AppIcon\admin_app_icon.png" BaseSize="512,512" />
+    <MauiSplashScreen Include="Resources\Splash\admin_splash.png" Color="#000000" BaseSize="512,530" />
     <MauiImage Include="Resources\Images\*" />
     <MauiFont Include="Resources\Fonts\*" />
     <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
