@@ -7,60 +7,102 @@ namespace ESergi.Mobile;
 public partial class MainPage : ContentPage
 {
     private const string Api = "https://elektrinoik-sergi.onrender.com";
+    private const int PageSize = 12;
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(60) };
     private readonly Grid gallery = new() { ColumnSpacing = 12, RowSpacing = 14, Padding = new Thickness(1, 0, 1, 20) };
-    private readonly Label countLabel = new() { Text = "Sergi yükleniyor…", FontSize = 13, TextColor = Color.FromArgb("#74818A"), VerticalTextAlignment = TextAlignment.Center };
-    private readonly Picker grade = new() { Title = "Tüm sınıflar", ItemsSource = new[] { "9", "10", "11", "12" }, TextColor = Color.FromArgb("#172D3A"), BackgroundColor = Colors.White };
-    private readonly Picker section = new() { Title = "Tüm şubeler", ItemsSource = new[] { "A", "B", "C", "D", "E", "F", "G" }, TextColor = Color.FromArgb("#172D3A"), BackgroundColor = Colors.White };
+    private readonly Button loadMoreButton = new() { Text = "Daha fazla sergi göster", HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSurface"), IsVisible = false };
+    private readonly Label countLabel = new() { Text = "Sergi yükleniyor…", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center };
+    private readonly Picker grade = new() { Title = "Tüm sınıflar", ItemsSource = new[] { "9", "10", "11", "12" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
+    private readonly Picker section = new() { Title = "Tüm şubeler", ItemsSource = new[] { "A", "B", "C", "D", "E", "F", "G" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
     private HubConnection? hub;
     private readonly string device;
     private readonly List<IDispatcherTimer> carouselTimers = [];
+    private bool discoverIsVisible;
+    private Border? discoverOrbOne;
+    private Border? discoverOrbTwo;
+    private int loadInProgress;
+    private int reloadRequested;
+    private int totalArtworkCount;
+    private int galleryItemsCount;
+    private IDispatcherTimer? hubRetryTimer;
+    private IDispatcherTimer? liveRefreshTimer;
+    private IDispatcherTimer? waitPulseTimer;
+    private bool hubConnecting;
+    private Grid? waitOverlay;
+    private Label? waitTitle;
+    private Label? waitSubtitle;
+    private ActivityIndicator? waitSpinner;
 
     public MainPage()
     {
         InitializeComponent();
-        device = Preferences.Default.Get("esergi-device", "");
-        if (string.IsNullOrWhiteSpace(device))
+        BackgroundColor = ThemePalette.Get("Background");
+        var headerWidth = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density;
+        var headerLogoSize = headerWidth < 380 ? 36d : 44d;
+        var schoolMarkSize = headerWidth < 380 ? 44d : 56d;
+        device = GetStableDeviceId();
+        Preferences.Default.Set("esergi-device", device);
+        
+        string GetStableDeviceId()
         {
-            device = Guid.NewGuid().ToString("N");
-            Preferences.Default.Set("esergi-device", device);
+            if (OperatingSystem.IsAndroid())
+            {
+                try
+                {
+                    var androidId = Android.Provider.Settings.Secure.GetString(
+                        Android.App.Application.Context.ContentResolver,
+                        Android.Provider.Settings.Secure.AndroidId);
+                    if (!string.IsNullOrWhiteSpace(androidId)) return $"android-{androidId}";
+                }
+                catch { /* Fall back to a persisted app-scoped ID on other platforms/devices. */ }
+            }
+            var saved = Preferences.Default.Get("esergi-device", "");
+            return string.IsNullOrWhiteSpace(saved) ? Guid.NewGuid().ToString("N") : saved;
         }
-
-        var brand = new HorizontalStackLayout { Spacing = 11, VerticalOptions = LayoutOptions.Center };
+        var brand = new HorizontalStackLayout { Spacing = 8, VerticalOptions = LayoutOptions.Center, HorizontalOptions = LayoutOptions.Start };
         brand.Add(new Border
         {
-            WidthRequest = 48,
-            HeightRequest = 48,
+            WidthRequest = headerLogoSize,
+            HeightRequest = headerLogoSize,
             Padding = 3,
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"),
             Stroke = Colors.Transparent,
             StrokeShape = new RoundRectangle { CornerRadius = 15 },
-            Content = new Image { Source = "esergi_logo.png", Aspect = Aspect.AspectFit }
+            Content = new Image { Source = "esergi_header.png", Aspect = Aspect.AspectFit }
         });
         var brandText = new VerticalStackLayout { Spacing = 0, VerticalOptions = LayoutOptions.Center };
-        brandText.Add(new Label { Text = "E-SERGİ", FontSize = 21, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#173E36") });
-        brandText.Add(new Label { Text = "ATATÜRK ANADOLU LİSESİ", FontSize = 9, CharacterSpacing = 1.1, TextColor = Color.FromArgb("#74818A") });
+        brandText.Add(new Label { Text = "E-SERGİ", FontSize = headerWidth < 380 ? 16 : 18, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), LineBreakMode = LineBreakMode.NoWrap });
         brand.Add(brandText);
 
-        var top = new Grid { Padding = new Thickness(18, 12), ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) } };
-        top.Add(brand);
-        var developer = new VerticalStackLayout { Spacing = 1, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
-        developer.Add(new Label { Text = "DEVELOPER", FontSize = 7, CharacterSpacing = 1.1, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#52626B"), HorizontalTextAlignment = TextAlignment.Center });
-        developer.Add(new Image { Source = "atagul_games.png", WidthRequest = 45, HeightRequest = 45, Aspect = Aspect.AspectFit });
-        top.Add(developer, 1, 0);
+        // Equal side columns keep the education emblem precisely centered even on narrow screens.
+        var top = new Grid { Padding = new Thickness(16, 6), BackgroundColor = ThemePalette.Get("Surface"), RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, HeightRequest = 96, RowSpacing = 0 };
+        top.Add(brand, 0, 0);
+        var schoolMark = new Border { WidthRequest = schoolMarkSize, HeightRequest = schoolMarkSize, Padding = 3, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeThickness = 0.5, StrokeShape = new RoundRectangle { CornerRadius = 18 }, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Content = new Image { Source = "meb_crest.png", Aspect = Aspect.AspectFit } };
+        AutomationProperties.SetName(schoolMark, "Millî Eğitim Bakanlığı arması");
+        top.Add(schoolMark, 1, 0);
+        var developer = new Label { Text = "DEVELOPER  ·  Ahmet Mete ATAGÜL", FontSize = 9, CharacterSpacing = 0.4, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.End, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation, Margin = new Thickness(0, 0, 2, 0) };
+        top.Add(developer, 0, 1); Grid.SetColumnSpan(developer, 3);
+        var themeButton = CenteredGlyph("⚙", 24, 52, ThemePalette.Get("SurfaceContainer"));
+        AutomationProperties.SetName(themeButton, "Tema seçenekleri");
+        themeButton.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await ThemePalette.Choose(Application.Current!)) });
+        var themeSlot = new Grid { HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Children = { themeButton } };
+        themeButton.HorizontalOptions = LayoutOptions.End; themeButton.VerticalOptions = LayoutOptions.Center;
+        top.Add(themeSlot, 2, 0);
 
         var filters = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 9 };
         filters.Add(StyleFilter(grade));
         filters.Add(StyleFilter(section), 1, 0);
-        grade.SelectedIndexChanged += async (_, _) => await Load();
-        section.SelectedIndexChanged += async (_, _) => await Load();
+        grade.SelectedItem = Preferences.Default.Get("esergi-filter-grade", "");
+        section.SelectedItem = Preferences.Default.Get("esergi-filter-section", "");
+        grade.SelectedIndexChanged += async (_, _) => { Preferences.Default.Set("esergi-filter-grade", grade.SelectedItem?.ToString() ?? ""); await Load(); };
+        section.SelectedIndexChanged += async (_, _) => { Preferences.Default.Set("esergi-filter-section", section.SelectedItem?.ToString() ?? ""); await Load(); };
 
         var heading = new VerticalStackLayout { Spacing = 5, Margin = new Thickness(0, 9, 0, 0) };
-        heading.Add(new Label { Text = "Sanat, her yerde.", FontSize = 27, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#173E36") });
-        heading.Add(new Label { Text = "Öğrencilerimizin eserlerini keşfet,\nbir sonraki favorini seç.", FontSize = 14, LineHeight = 1.2, TextColor = Color.FromArgb("#74818A") });
+        heading.Add(new Label { Text = "Sanat, her yerde.", FontSize = 27, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
+        heading.Add(new Label { Text = "Öğrencilerimizin eserlerini keşfet,\nbir sonraki favorini seç.", FontSize = 14, LineHeight = 1.2, TextColor = ThemePalette.Get("OnSurfaceVariant") });
 
         var galleryHeading = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Margin = new Thickness(0, 10, 0, 0) };
-        galleryHeading.Add(new Label { Text = "Öğrenci galerisi", FontSize = 18, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#172D3A"), VerticalTextAlignment = TextAlignment.Center });
+        galleryHeading.Add(new Label { Text = "Öğrenci galerisi", FontSize = 18, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), VerticalTextAlignment = TextAlignment.Center });
         galleryHeading.Add(countLabel, 1, 0);
 
         var body = new VerticalStackLayout { Padding = new Thickness(18, 5, 18, 0), Spacing = 14 };
@@ -68,83 +110,399 @@ public partial class MainPage : ContentPage
         body.Add(filters);
         body.Add(galleryHeading);
         body.Add(gallery);
-        var root = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star) }, RowSpacing = 0 };
+        loadMoreButton.Clicked += async (_, _) => await LoadMore();
+        body.Add(loadMoreButton);
+        var scroll = new ScrollView { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Never };
+
+        // The Keşfet tab contains only the school's vision/mission copy. Its text remains still;
+        // only the soft color shapes behind it drift slowly for a restrained ambient effect.
+        var visionAndMission = new VerticalStackLayout { Spacing = 10 };
+        visionAndMission.Add(new Label { Text = "Vizyon:", FontSize = 20, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
+        visionAndMission.Add(new Label
+        {
+            Text = "“Atatürk Anadolu Lisesi’ni okul paydaşlarımızın (yöneticilerimiz, öğretmenlerimiz, öğrencilerimiz, mezunlarımız ve velilerimizin) güç birliği ile; ortaöğretim giriş sınavlarında öncelikli tercih edilen, ülkemizin en iyi üniversitelerine her yıl artan sayıyla öğrenci yerleştiren, sosyal ve kültürel etkinliklerle adından söz ettiren güçlü bir eğitim kurumu yapmaktır.”",
+            FontSize = 15, LineHeight = 1.35, TextColor = ThemePalette.Get("OnSurface")
+        });
+        visionAndMission.Add(new Label { Text = "Misyon:", FontSize = 20, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
+        visionAndMission.Add(new Label
+        {
+            Text = "“Atatürkçü düşünce sistemini davranış haline getirmiş, çağdaş, demokratik lider özelliklerine sahip, okuduğu okula bağlılık duygusu gelişmiş ve laik gençler yetiştirmektir. Bu çerçeveden hareketle biz, öğrencilerimizin öğrenmelerini sağlamak; onların bilgili, yetenekli ve kendine güvenen bireyler olarak yetişmelerine zemin hazırlamak ve onlara 21. yüzyılın gelişen ihtiyaçlarına cevap verebilecek beceriler kazandırmak için varız.”",
+            FontSize = 15, LineHeight = 1.35, TextColor = ThemePalette.Get("OnSurface")
+        });
+        var visionScroll = new ScrollView { Content = visionAndMission, VerticalScrollBarVisibility = ScrollBarVisibility.Never };
+        var discoveryCanvas = new Grid { Padding = 20, BackgroundColor = ThemePalette.Get("SurfaceContainer"), RowDefinitions = { new RowDefinition(GridLength.Star) } };
+        discoverOrbOne = CreateDiscoveryOrb(220, 0.12);
+        discoverOrbTwo = CreateDiscoveryOrb(160, 0.09);
+        discoverOrbOne.HorizontalOptions = LayoutOptions.Start; discoverOrbOne.VerticalOptions = LayoutOptions.Start;
+        discoverOrbTwo.HorizontalOptions = LayoutOptions.End; discoverOrbTwo.VerticalOptions = LayoutOptions.End;
+        discoveryCanvas.Add(discoverOrbOne); discoveryCanvas.Add(discoverOrbTwo);
+        visionScroll.ZIndex = 1;
+        discoveryCanvas.Add(visionScroll);
+        var storyFrame = new Border { Padding = 0, BackgroundColor = ThemePalette.Get("SurfaceContainer"), Stroke = ThemePalette.Get("Outline"), StrokeThickness = 0.5, StrokeShape = new RoundRectangle { CornerRadius = 24 }, Content = discoveryCanvas };
+        var developerCredit = new VerticalStackLayout { Spacing = 2, Padding = new Thickness(0, 8), HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
+        developerCredit.Add(new Label { Text = "DEVELOPER", FontSize = 10, CharacterSpacing = 1.4, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
+        developerCredit.Add(new Label { Text = "Ahmet Mete ATAGÜL", FontSize = 14, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center });
+        var discoveryPage = new Grid { Padding = new Thickness(16, 14), RowDefinitions = { new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, RowSpacing = 8, IsVisible = false };
+        discoveryPage.Add(storyFrame);
+        discoveryPage.Add(developerCredit, 0, 1);
+
+        var screenWidth = headerWidth;
+        var navigation = new Grid { WidthRequest = Math.Min(400, Math.Max(280, screenWidth - 32)), HorizontalOptions = LayoutOptions.Center, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, BackgroundColor = ThemePalette.Get("Surface"), Padding = new Thickness(8, 4), ColumnSpacing = 8 };
+        var homeTab = new Button { Text = "⌂  Ana Sayfa", FontSize = 13, HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSurface"), Padding = new Thickness(8, 4), LineBreakMode = LineBreakMode.NoWrap, Margin = 2 };
+        AutomationProperties.SetName(homeTab, "Ana Sayfa");
+        var discoverTab = new Button { Text = "⌕  Keşfet", FontSize = 13, HeightRequest = 52, CornerRadius = 18, BackgroundColor = Colors.Transparent, TextColor = ThemePalette.Get("OnSurfaceVariant"), Padding = new Thickness(8, 4), LineBreakMode = LineBreakMode.NoWrap, Margin = 2 };
+        AutomationProperties.SetName(discoverTab, "Okulun vizyon ve misyonu");
+        homeTab.Clicked += async (_, _) =>
+        {
+            discoverIsVisible = false; discoveryPage.IsVisible = false; scroll.IsVisible = true;
+            discoverOrbOne?.CancelAnimations(); discoverOrbTwo?.CancelAnimations();
+            foreach (var timer in carouselTimers) timer.Start();
+            homeTab.BackgroundColor = ThemePalette.Get("SecondaryContainer"); homeTab.TextColor = ThemePalette.Get("OnSurface");
+            discoverTab.BackgroundColor = Colors.Transparent; discoverTab.TextColor = ThemePalette.Get("OnSurfaceVariant");
+            await scroll.ScrollToAsync(0, 0, true);
+        };
+        discoverTab.Clicked += (_, _) =>
+        {
+            scroll.IsVisible = false; discoveryPage.IsVisible = true;
+            foreach (var timer in carouselTimers) timer.Stop();
+            discoverTab.BackgroundColor = ThemePalette.Get("SecondaryContainer"); discoverTab.TextColor = ThemePalette.Get("OnSurface");
+            homeTab.BackgroundColor = Colors.Transparent; homeTab.TextColor = ThemePalette.Get("OnSurfaceVariant");
+            if (!discoverIsVisible)
+            {
+                discoverIsVisible = true;
+                // Keep this transition intentionally short. Permanent frame animations on
+                // gradient layers caused jank on lower-memory Android devices.
+                if (discoverOrbOne is not null) _ = AnimateDiscoveryOrb(discoverOrbOne, 16, 12);
+                if (discoverOrbTwo is not null) _ = AnimateDiscoveryOrb(discoverOrbTwo, -12, -14);
+            }
+        };
+        navigation.Add(homeTab); navigation.Add(discoverTab, 1, 0);
+        var root = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, RowSpacing = 0 };
         root.Add(top);
-        root.Add(new ScrollView { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Never }, 0, 1);
+        root.Add(scroll, 0, 1);
+        root.Add(discoveryPage, 0, 1);
+        root.Add(navigation, 0, 2);
+        waitTitle = new Label { Text = "Lütfen bekleyiniz", FontSize = 21, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center };
+        waitSubtitle = new Label { Text = "Bu işlem biraz uzun sürebilir.", FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center };
+        waitSpinner = new ActivityIndicator { IsRunning = true, Color = ThemePalette.Get("Primary"), WidthRequest = 48, HeightRequest = 48, HorizontalOptions = LayoutOptions.Center };
+        SemanticProperties.SetDescription(waitSpinner, "Sunucudan sergi verileri bekleniyor");
+        var waitPanel = new Border { Padding = new Thickness(28, 24), BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeShape = new RoundRectangle { CornerRadius = 28 }, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Center, MaximumWidthRequest = 380, Content = new VerticalStackLayout { Spacing = 15, Children = { waitSpinner, waitTitle, waitSubtitle } } };
+        waitOverlay = new Grid { Padding = 28, BackgroundColor = ThemePalette.Get("Scrim").WithAlpha(0.58f), IsVisible = true, Opacity = 0, ZIndex = 20, Children = { waitPanel } };
+        root.Add(waitOverlay);
         Content = root;
-        _ = Load();
-        _ = ConnectLive();
+        ShowWait("Lütfen bekleyiniz", "Bu işlem biraz uzun sürebilir.");
+        _ = WarmServer();
+        _ = InitializeNetwork();
     }
 
     private static Border StyleFilter(Picker picker) => new()
     {
         Padding = new Thickness(10, 1),
-        BackgroundColor = Colors.White,
-        Stroke = Color.FromArgb("#E9E7E0"),
+        BackgroundColor = ThemePalette.Get("SurfaceContainer"),
+        Stroke = ThemePalette.Get("Outline"),
         StrokeShape = new RoundRectangle { CornerRadius = 14 },
         Content = picker
     };
 
+    private static Border CreateDiscoveryOrb(double size, double opacity) => new()
+    {
+        WidthRequest = size,
+        HeightRequest = size,
+        Opacity = opacity,
+        Stroke = Colors.Transparent,
+        StrokeShape = new RoundRectangle { CornerRadius = size / 2 },
+        Background = new LinearGradientBrush(new GradientStopCollection
+        {
+            new(ThemePalette.Get("Primary"), 0f),
+            new(ThemePalette.Get("Secondary"), 1f)
+        }, new Point(0, 0), new Point(1, 1))
+    };
+
+    private async Task AnimateDiscoveryOrb(Border orb, double x, double y)
+    {
+        await orb.TranslateToAsync(x, y, 650, Easing.CubicOut);
+    }
+
+    private async Task InitializeNetwork()
+    {
+        // Fetch immediately; the real health probe runs concurrently and warms a sleeping host.
+        await Load();
+        await ConnectLive();
+    }
+
+    private async Task WarmServer()
+    {
+        try { using var response = await Client.GetAsync($"{Api}/health"); response.EnsureSuccessStatusCode(); }
+        catch { /* Actual data request owns the visible error/retry state. */ }
+    }
+
+    private void ShowWait(string title, string subtitle)
+    {
+        if (!MainThread.IsMainThread) { MainThread.BeginInvokeOnMainThread(() => ShowWait(title, subtitle)); return; }
+        if (waitOverlay is null) return;
+        waitTitle!.Text = title; waitSubtitle!.Text = subtitle;
+        waitOverlay.IsVisible = true;
+        waitPulseTimer ??= Dispatcher.CreateTimer();
+        waitPulseTimer.Interval = TimeSpan.FromMilliseconds(900);
+        waitPulseTimer.Tick -= WaitPulseTick; waitPulseTimer.Tick += WaitPulseTick;
+        if (waitPulseTimer.IsRunning) return;
+        waitPulseTimer.Start();
+        _ = waitOverlay.FadeToAsync(1, 180, Easing.CubicOut);
+    }
+
+    private void WaitPulseTick(object? sender, EventArgs e)
+    {
+        if (waitOverlay?.IsVisible != true || waitTitle is null) { waitPulseTimer?.Stop(); return; }
+        _ = waitTitle.FadeToAsync(waitTitle.Opacity > 0.8 ? 0.68 : 1, 420, Easing.CubicInOut);
+    }
+
+    private void HideWait()
+    {
+        if (!MainThread.IsMainThread) { MainThread.BeginInvokeOnMainThread(HideWait); return; }
+        waitPulseTimer?.Stop();
+        if (waitOverlay is null) return;
+        waitOverlay.CancelAnimations();
+        waitTitle?.CancelAnimations();
+        waitOverlay.Opacity = 0; waitOverlay.IsVisible = false;
+    }
+
+    protected override void OnDisappearing()
+    {
+        foreach (var timer in carouselTimers) timer.Stop();
+        discoverIsVisible = false;
+        discoverOrbOne?.CancelAnimations();
+        discoverOrbTwo?.CancelAnimations();
+        var oldHub = hub;
+        hub = null;
+        hubRetryTimer?.Stop();
+        liveRefreshTimer?.Stop();
+        if (oldHub is not null) _ = oldHub.DisposeAsync();
+        base.OnDisappearing();
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        foreach (var timer in carouselTimers) timer.Start();
+        if (hub is null) _ = ConnectLive();
+    }
+
     private async Task ConnectLive()
     {
+        if (hubConnecting || hub?.State == HubConnectionState.Connected) return;
+        hubConnecting = true;
+        HubConnection? connection = null;
         try
         {
-            hub = new HubConnectionBuilder().WithUrl($"{Api}/live/exhibitions").WithAutomaticReconnect().Build();
-            hub.On<System.Text.Json.JsonElement>("ArtworkChanged", _ => MainThread.BeginInvokeOnMainThread(async () => await Load()));
-            hub.On<System.Text.Json.JsonElement>("RatingChanged", _ => MainThread.BeginInvokeOnMainThread(async () => await Load()));
-            await hub.StartAsync();
-            hub.Reconnected += async _ => await Load();
+            connection = new HubConnectionBuilder().WithUrl($"{Api}/live/exhibitions").WithAutomaticReconnect().Build();
+            hub = connection;
+            connection.On<System.Text.Json.JsonElement>("ArtworkChanged", _ => MainThread.BeginInvokeOnMainThread(() => { ShowWait("Yeni sergi güncelleniyor", "Veriler öğrenci uygulamalarına aktarılıyor. Bu işlem biraz uzun sürebilir."); ScheduleLiveRefresh(); }));
+            connection.On<System.Text.Json.JsonElement>("RatingChanged", _ => MainThread.BeginInvokeOnMainThread(ScheduleLiveRefresh));
+            connection.Reconnected += _ => { MainThread.BeginInvokeOnMainThread(ScheduleLiveRefresh); return Task.CompletedTask; };
+            connection.Closed += async _ =>
+            {
+                if (ReferenceEquals(hub, connection)) hub = null;
+                MainThread.BeginInvokeOnMainThread(() => { if (IsVisible) ScheduleHubRetry(); });
+                await Task.CompletedTask;
+            };
+            await connection.StartAsync();
         }
-        catch { /* API/SignalR recovery is handled by refresh and the reconnect policy. */ }
+        catch
+        {
+            if (ReferenceEquals(hub, connection)) hub = null;
+            if (connection is not null) await connection.DisposeAsync();
+            if (IsVisible) ScheduleHubRetry();
+        }
+        finally { hubConnecting = false; }
+    }
+
+    private void ScheduleLiveRefresh()
+    {
+        liveRefreshTimer ??= Dispatcher.CreateTimer();
+        liveRefreshTimer.Interval = TimeSpan.FromMilliseconds(450);
+        liveRefreshTimer.IsRepeating = false;
+        liveRefreshTimer.Tick -= LiveRefreshTick;
+        liveRefreshTimer.Tick += LiveRefreshTick;
+        liveRefreshTimer.Stop();
+        liveRefreshTimer.Start();
+    }
+
+    private void LiveRefreshTick(object? sender, EventArgs e) { liveRefreshTimer?.Stop(); if (IsVisible) _ = Load(); }
+
+    private void ScheduleHubRetry()
+    {
+        if (hubRetryTimer?.IsRunning == true) return;
+        hubRetryTimer ??= Dispatcher.CreateTimer();
+        hubRetryTimer.Interval = TimeSpan.FromSeconds(8);
+        hubRetryTimer.Tick -= HubRetryTick;
+        hubRetryTimer.Tick += HubRetryTick;
+        hubRetryTimer.Start();
+    }
+
+    private void HubRetryTick(object? sender, EventArgs e)
+    {
+        hubRetryTimer?.Stop();
+        if (IsVisible && hub is null) _ = ConnectLive();
     }
 
     private async Task Load()
     {
+        if (Interlocked.Exchange(ref loadInProgress, 1) == 1)
+        {
+            Interlocked.Exchange(ref reloadRequested, 1);
+            return;
+        }
         try
         {
-            var query = new List<string>();
-            if (grade.SelectedItem is string g) query.Add("grade=" + Uri.EscapeDataString(g));
-            if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
-            var suffix = query.Count > 0 ? "?" + string.Join("&", query) : "";
-            var rows = await Client.GetFromJsonAsync<List<Artwork>>($"{Api}/api/artworks{suffix}") ?? [];
+            do
+            {
+                Interlocked.Exchange(ref reloadRequested, 0);
+                await LoadCore();
+            } while (Interlocked.Exchange(ref reloadRequested, 0) == 1);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref loadInProgress, 0);
+            if (Interlocked.Exchange(ref reloadRequested, 0) == 1) _ = Load();
+        }
+    }
+
+    private async Task LoadCore()
+    {
+        if (!MainThread.IsMainThread) { await MainThread.InvokeOnMainThreadAsync(LoadCore); return; }
+        var columnCount = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density >= 600 ? 3 : 2;
+        try
+        {
+            if (gallery.Children.Count == 0)
+            {
+                gallery.ColumnDefinitions.Clear(); for (var c = 0; c < columnCount; c++) gallery.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                gallery.RowDefinitions.Clear(); gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                var progress = new ActivityIndicator { IsRunning = true, Color = ThemePalette.Get("Primary"), HeightRequest = 64, HorizontalOptions = LayoutOptions.Center };
+                SemanticProperties.SetDescription(progress, "Sergiler yükleniyor");
+                gallery.Add(progress); Grid.SetColumnSpan(progress, columnCount);
+            }
+            var (rows, total) = await FetchPage(0);
+            totalArtworkCount = total;
             foreach (var oldTimer in carouselTimers) oldTimer.Stop();
             carouselTimers.Clear();
             gallery.Children.Clear();
+            galleryItemsCount = 0;
             gallery.RowDefinitions.Clear();
             gallery.ColumnDefinitions.Clear();
-            gallery.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-            gallery.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-            countLabel.Text = $"{rows.Count} eser";
+            for (var c = 0; c < columnCount; c++) gallery.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            countLabel.Text = $"{totalArtworkCount} eser";
+            loadMoreButton.IsVisible = rows.Count < totalArtworkCount;
+            loadMoreButton.IsEnabled = true;
+            loadMoreButton.Text = "Daha fazla sergi göster";
+            HideWait();
 
             if (rows.Count == 0)
             {
-                var empty = new Border { Padding = 22, BackgroundColor = Colors.White, Stroke = Color.FromArgb("#E9E7E0"), StrokeShape = new RoundRectangle { CornerRadius = 20 } };
+                var empty = new Border { Padding = 22, BackgroundColor = ThemePalette.Get("SurfaceContainer"), Stroke = ThemePalette.Get("Outline"), StrokeShape = new RoundRectangle { CornerRadius = 20 } };
                 empty.Content = new VerticalStackLayout { Spacing = 8, Children =
                 {
-                    new Label { Text = "Henüz eser yok", FontSize = 17, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#173E36") },
-                    new Label { Text = "Yeni eserler eklendiğinde burada\ngörünür ve otomatik güncellenir.", FontSize = 13, TextColor = Color.FromArgb("#74818A") }
+                    new Label { Text = "Henüz eser yok", FontSize = 17, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") },
+                    new Label { Text = "Yeni eserler eklendiğinde burada\ngörünür ve otomatik güncellenir.", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant") }
                 }};
                 gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
                 gallery.Add(empty);
-                Grid.SetColumnSpan(empty, 2);
+                Grid.SetColumnSpan(empty, columnCount);
                 return;
             }
 
-            for (var i = 0; i < rows.Count; i++)
-            {
-                if (i % 2 == 0) gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-                var card = CreateCard(rows[i]);
-                gallery.Add(card, i % 2, i / 2);
-            }
+            AppendCards(rows);
         }
         catch
         {
+            foreach (var timer in carouselTimers) timer.Stop();
+            carouselTimers.Clear();
             countLabel.Text = "Bağlantı bekleniyor";
-            if (gallery.Children.Count == 0)
-            {
-                var note = new Label { Text = "Sergi şu an yüklenemedi. İnternet bağlantını kontrol edip biraz sonra yeniden dene.", FontSize = 14, TextColor = Color.FromArgb("#74818A") };
-                gallery.RowDefinitions.Clear(); gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto)); gallery.Add(note); Grid.SetColumnSpan(note, 2);
-            }
+            HideWait();
+            gallery.Children.Clear(); gallery.RowDefinitions.Clear(); gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            galleryItemsCount = 0;
+            loadMoreButton.IsVisible = false;
+            var retry = new VerticalStackLayout { Padding = 16, Spacing = 12, HorizontalOptions = LayoutOptions.Center };
+            retry.Add(new Label { Text = "Sergiler yüklenemedi", FontSize = 17, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center });
+            retry.Add(new Label { Text = "İnternet bağlantısını kontrol edip yeniden deneyebilirsin.", FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
+            var retryButton = new Button { Text = "Tekrar dene", HeightRequest = 48, CornerRadius = 16, BackgroundColor = ThemePalette.Get("Primary"), TextColor = ThemePalette.Get("OnPrimary") };
+            retryButton.Clicked += async (_, _) => await Load(); retry.Add(retryButton); gallery.Add(retry); Grid.SetColumnSpan(retry, columnCount);
+        }
+    }
+
+    private async Task<(List<Artwork> Rows, int Total)> FetchPage(int skip)
+    {
+        var query = new List<string> { $"skip={skip}", $"take={PageSize}" };
+        if (grade.SelectedItem is string g) query.Add("grade=" + Uri.EscapeDataString(g));
+        if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
+        using var response = await Client.GetAsync($"{Api}/api/artworks?{string.Join("&", query)}");
+        response.EnsureSuccessStatusCode();
+        var rows = await response.Content.ReadFromJsonAsync<List<Artwork>>() ?? [];
+        var serverCount = 0;
+        var hasServerTotal = response.Headers.TryGetValues("X-Total-Count", out var values) && int.TryParse(values.FirstOrDefault(), out serverCount);
+        var total = hasServerTotal ? serverCount : rows.Count;
+        // Backwards compatible with the currently deployed API while it is awaiting redeploy.
+        // The new API pages in MongoDB; the old API is locally sliced until the backend deploys.
+        if (!hasServerTotal)
+        {
+            // Existing deployments return the complete filtered collection; rank it all before slicing locally.
+            ApplyRanking(rows);
+            rows = rows.Skip(skip).Take(PageSize).ToList();
+        }
+        return (rows, total);
+    }
+
+    private static void ApplyRanking(List<Artwork> items)
+    {
+        var ranked = items.Where(x => x.RatingCount > 0)
+            .OrderByDescending(x => x.AverageRating)
+            .ThenByDescending(x => x.RatingCount)
+            .ThenByDescending(x => x.EventDate)
+            .ToList();
+        for (var i = 0; i < ranked.Count; i++) ranked[i].Rank = i + 1;
+        var order = ranked.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
+        items.Sort((a, b) =>
+        {
+            var aRanked = order.Contains(a.Id); var bRanked = order.Contains(b.Id);
+            if (aRanked != bRanked) return aRanked ? -1 : 1;
+            if (aRanked) return a.Rank.CompareTo(b.Rank);
+            return b.EventDate.CompareTo(a.EventDate);
+        });
+    }
+
+    private async Task LoadMore()
+    {
+        if (!loadMoreButton.IsEnabled) return;
+        loadMoreButton.IsEnabled = false;
+        loadMoreButton.Text = "Sergiler yükleniyor…";
+        try
+        {
+            var (rows, total) = await FetchPage(galleryItemsCount);
+            totalArtworkCount = total;
+            AppendCards(rows);
+            countLabel.Text = $"{totalArtworkCount} eser";
+            loadMoreButton.IsVisible = galleryItemsCount < totalArtworkCount;
+        }
+        catch
+        {
+            await DisplayAlertAsync("Yüklenemedi", "Daha fazla sergi yüklenemedi. Lütfen tekrar deneyin.", "Tamam");
+            loadMoreButton.IsVisible = true;
+            loadMoreButton.IsEnabled = true;
+            loadMoreButton.Text = "Tekrar dene";
+        }
+        finally
+        {
+            if (loadMoreButton.IsVisible && loadMoreButton.Text != "Tekrar dene") loadMoreButton.IsEnabled = true;
+        }
+    }
+
+    private void AppendCards(IReadOnlyList<Artwork> rows)
+    {
+        var columns = gallery.ColumnDefinitions.Count;
+        foreach (var item in rows)
+        {
+            var index = galleryItemsCount++;
+            if (index % columns == 0) gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            gallery.Add(CreateCard(item), index % columns, index / columns);
         }
     }
 
@@ -152,71 +510,147 @@ public partial class MainPage : ContentPage
     {
         var content = new VerticalStackLayout { Spacing = 7 };
         var photos = item.ImageUrls is { Count: > 0 } ? item.ImageUrls : (string.IsNullOrWhiteSpace(item.ImageUrl) ? [] : new List<string> { item.ImageUrl });
-        var image = new Image { Source = photos.FirstOrDefault(), HeightRequest = 145, Aspect = Aspect.AspectFill };
+        var image = new Image { Source = CachedImageSource(photos.FirstOrDefault()), HeightRequest = 145, Aspect = Aspect.AspectFill };
         var imageFrame = new Border { Padding = 0, Stroke = Colors.Transparent, StrokeShape = new RoundRectangle { CornerRadius = 15 }, Content = image, HeightRequest = 145 };
         var tapImage = new TapGestureRecognizer();
-        tapImage.Tapped += async (_, _) => await OpenPreview(photos);
+        tapImage.Tapped += async (_, _) => await OpenPreview(item);
         imageFrame.GestureRecognizers.Add(tapImage);
         if (photos.Count > 1)
         {
             var index = 0;
             var timer = Dispatcher.CreateTimer();
             timer.Interval = TimeSpan.FromSeconds(3);
-            timer.Tick += (_, _) => { index = (index + 1) % photos.Count; image.Source = photos[index]; };
+            timer.Tick += (_, _) => { index = (index + 1) % photos.Count; image.Source = CachedImageSource(photos[index]); };
             timer.Start();
             carouselTimers.Add(timer);
         }
         content.Add(imageFrame);
-        content.Add(new Label { Text = item.ArtworkName, FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#172D3A"), LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2, HeightRequest = 39 });
-        content.Add(new Label { Text = item.StudentName, FontSize = 12, TextColor = Color.FromArgb("#52626B"), LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
-        content.Add(new Label { Text = $"{item.ClassGrade}-{item.Section}  ·  {item.EventDate:dd.MM.yyyy}", FontSize = 10, TextColor = Color.FromArgb("#89939A"), LineBreakMode = LineBreakMode.TailTruncation });
-        content.Add(new Label { Text = item.Description, FontSize = 11, TextColor = Color.FromArgb("#74818A"), MaxLines = 2, LineBreakMode = LineBreakMode.TailTruncation, HeightRequest = 30 });
+        View Openable(Label label) { label.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await OpenPreview(item)) }); return label; }
+        content.Add(Openable(new Label { Text = item.ArtworkName, FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2, HeightRequest = 39 }));
+        content.Add(Openable(new Label { Text = item.StudentName, FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 }));
+        content.Add(Openable(new Label { Text = $"{item.ClassGrade}-{item.Section}  ·  {item.EventDate:dd.MM.yyyy}", FontSize = 10, TextColor = ThemePalette.Get("OnSurfaceVariant"), LineBreakMode = LineBreakMode.TailTruncation }));
+        var description = new Label { Text = item.Description, FontSize = 11, TextColor = ThemePalette.Get("OnSurfaceVariant"), LineBreakMode = LineBreakMode.WordWrap };
+        var openDetails = new TapGestureRecognizer();
+        openDetails.Tapped += async (_, _) => await OpenPreview(item);
+        description.GestureRecognizers.Add(openDetails);
+        content.Add(description);
+        var detailsHint = new Label { Text = "Daha fazla bilgi için tıklayınız", FontSize = 11, TextColor = ThemePalette.Get("Primary"), HeightRequest = 48, VerticalTextAlignment = TextAlignment.Center, AutomationId = "open-exhibition-details" };
+        detailsHint.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await OpenPreview(item)) });
+        content.Add(detailsHint);
         var ratingRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, Margin = new Thickness(0, 1, 0, 0) };
-        ratingRow.Add(new Label { Text = $"★ {item.AverageRating:0.0}", FontSize = 13, FontAttributes = FontAttributes.Bold, TextColor = Color.FromArgb("#B27B30"), VerticalTextAlignment = TextAlignment.Center });
-        ratingRow.Add(new Label { Text = $"{item.RatingCount} oy", FontSize = 10, TextColor = Color.FromArgb("#89939A"), VerticalTextAlignment = TextAlignment.Center }, 1, 0);
+        ratingRow.Add(new Label { Text = $"★ {item.AverageRating:0.0}", FontSize = 13, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), VerticalTextAlignment = TextAlignment.Center });
+        ratingRow.Add(new Label { Text = $"{item.RatingCount} oy", FontSize = 10, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center }, 1, 0);
+        ratingRow.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await OpenPreview(item)) });
+        if (item.Rank > 0)
+        {
+            var rankBackground = item.Rank switch { 1 => "RankGold", 2 => "RankSilver", 3 => "RankBronze", _ => "PrimaryContainer" };
+            var rankForeground = item.Rank switch { 1 => "OnRankGold", 2 => "OnRankSilver", 3 => "OnRankBronze", _ => "OnPrimaryContainer" };
+            var rankText = item.Rank == 1 ? $"🏆  {item.Rank}. Sıra" : $"{item.Rank}. Sıra";
+            var badge = new Border { Padding = new Thickness(10, 5), HorizontalOptions = LayoutOptions.Start, BackgroundColor = ThemePalette.Get(rankBackground), Stroke = Colors.Transparent, StrokeShape = new RoundRectangle { CornerRadius = 12 }, Content = new Label { Text = rankText, FontSize = 11, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get(rankForeground), VerticalTextAlignment = TextAlignment.Center } };
+            content.Add(badge);
+        }
         content.Add(ratingRow);
         var rateRow = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, ColumnSpacing = 1 };
-        rateRow.Add(new Label { Text = "Puanla", FontSize = 10, TextColor = Color.FromArgb("#74818A"), VerticalTextAlignment = TextAlignment.Center });
-        var stars = new HorizontalStackLayout { Spacing = 0, HorizontalOptions = LayoutOptions.End };
-        for (var score = 1; score <= 5; score++)
-        {
-            var vote = score;
-            var star = new Button { Text = "★", FontSize = 17, Padding = 0, WidthRequest = 25, HeightRequest = 36, CornerRadius = 9, BackgroundColor = Color.FromArgb("#F4EBDD"), TextColor = Color.FromArgb("#B27B30") };
-            star.Clicked += async (_, _) => await Rate(item, vote);
-            stars.Add(star);
-        }
-        rateRow.Add(stars, 1, 0);
+        rateRow.Add(new Label { Text = "Puanla", FontSize = 10, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center });
+        var rateButton = new Button { Text = "★  Puan ver", FontSize = 12, Padding = new Thickness(12, 4), HeightRequest = 48, CornerRadius = 16, BackgroundColor = ThemePalette.Get("PrimaryContainer"), TextColor = ThemePalette.Get("OnPrimaryContainer") };
+        AutomationProperties.SetName(rateButton, $"{item.ArtworkName} eserini puanla");
+        rateButton.Clicked += async (_, _) => await ChooseRating(item);
+        rateRow.Add(rateButton, 1, 0);
         content.Add(rateRow);
         return new Border
         {
             Padding = 10,
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#ECEAE4"),
+            BackgroundColor = ThemePalette.Get("SurfaceContainer"),
+            Stroke = ThemePalette.Get("Outline"),
             StrokeThickness = 1,
             StrokeShape = new RoundRectangle { CornerRadius = 20 },
-            Shadow = new Shadow { Brush = Color.FromArgb("#16000000"), Offset = new Point(0, 3), Radius = 10, Opacity = 0.35f },
             Content = content
         };
     }
 
-    private async Task OpenPreview(IReadOnlyList<string> photos)
+    private async Task OpenPreview(Artwork item)
     {
+        var photos = item.ImageUrls is { Count: > 0 } ? item.ImageUrls : (string.IsNullOrWhiteSpace(item.ImageUrl) ? [] : new List<string> { item.ImageUrl });
         if (photos.Count == 0) return;
-        await Navigation.PushModalAsync(new ImagePreviewPage(photos));
+        await Navigation.PushModalAsync(new ArtworkDetailPage(item, photos, ChooseRating));
     }
+
+    internal static ImageSource? CachedImageSource(string? url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
+        {
+            // Cloudinary can resize and compress delivery without changing the stored original.
+            if (uri.Host.EndsWith(".cloudinary.com", StringComparison.OrdinalIgnoreCase))
+            {
+                const string uploadPath = "/upload/";
+                var index = uri.AbsolutePath.IndexOf(uploadPath, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0 && !uri.AbsolutePath[(index + uploadPath.Length)..].StartsWith("f_auto,", StringComparison.OrdinalIgnoreCase))
+                {
+                    var builder = new UriBuilder(uri) { Path = uri.AbsolutePath.Insert(index + uploadPath.Length, "f_auto,q_auto:good,w_1280,c_limit/") };
+                    uri = builder.Uri;
+                }
+            }
+            return new UriImageSource { Uri = uri, CachingEnabled = true, CacheValidity = TimeSpan.FromDays(7) };
+        }
+        return string.IsNullOrWhiteSpace(url) ? null : ImageSource.FromFile(url);
+    }
+
+    internal static Border CenteredGlyph(string glyph, double size, double box, Color background) => new()
+    {
+        WidthRequest = box, HeightRequest = box, MinimumWidthRequest = 48, MinimumHeightRequest = 48,
+        Padding = 0, Margin = 0, BackgroundColor = background, Stroke = Colors.Transparent,
+        StrokeShape = new RoundRectangle { CornerRadius = box / 2 },
+        Content = new Label { Text = glyph, FontSize = size, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Margin = 0, Padding = 0 }
+    };
 
     private async Task Rate(Artwork item, int score)
     {
         try
         {
-            using var response = await Client.PostAsJsonAsync($"{Api}/api/artworks/{item.Id}/ratings", new { score, deviceId = device });
-            response.EnsureSuccessStatusCode();
+            HttpResponseMessage? response = null;
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    response = await Client.PostAsJsonAsync($"{Api}/api/artworks/{item.Id}/ratings", new { score, deviceId = device });
+                }
+                catch (HttpRequestException) when (attempt == 0) { await Task.Delay(900); continue; }
+                if ((int)response.StatusCode >= 500 && attempt == 0) { response.Dispose(); response = null; await Task.Delay(900); continue; }
+                break;
+            }
+            using (response)
+            {
+                if (response is null) throw new HttpRequestException("Sunucudan yanıt alınamadı.");
+                if (!response.IsSuccessStatusCode)
+                {
+                    var details = (await response.Content.ReadAsStringAsync()).Trim();
+                    var message = response.StatusCode switch
+                    {
+                        System.Net.HttpStatusCode.Conflict => "Bu cihazdan bu sergiye daha önce oy verilmiş. Her sergi için yalnızca bir kez puan verebilirsin.",
+                        System.Net.HttpStatusCode.NotFound => "Bu eser artık yayında değil. Sergi listesini yenile.",
+                        System.Net.HttpStatusCode.ServiceUnavailable => "Sunucu şu an hizmet veremiyor. Biraz sonra tekrar dene.",
+                        _ => $"Sunucu {((int)response.StatusCode)} yanıtı verdi. {details}"
+                    };
+                    await DisplayAlertAsync("Puan gönderilemedi", message, "Tamam");
+                    return;
+                }
+            }
             await Load();
         }
-        catch { await DisplayAlertAsync("Puan gönderilemedi", "İnternet bağlantını kontrol edip tekrar dene.", "Tamam"); }
+        catch (TaskCanceledException) { await DisplayAlertAsync("Yanıt gecikti", "Sunucu zamanında yanıt vermedi. Bağlantını kontrol edip tekrar dene.", "Tamam"); }
+        catch (HttpRequestException) { await DisplayAlertAsync("Sunucuya ulaşılamadı", "İnternet bağlantını kontrol et. Bağlantı varsa sunucu geçici olarak uyuyor olabilir; tekrar dene.", "Tamam"); }
+        catch { await DisplayAlertAsync("Puan gönderilemedi", "Beklenmeyen bir sorun oluştu. Lütfen tekrar dene.", "Tamam"); }
     }
 
-    private sealed class Artwork
+    private async Task ChooseRating(Artwork item)
+    {
+        var options = new[] { "1 yıldız", "2 yıldız", "3 yıldız", "4 yıldız", "5 yıldız" };
+        var choice = await DisplayActionSheetAsync("Eseri puanla", "Vazgeç", null, options);
+        var score = Array.IndexOf(options, choice) + 1;
+        if (score > 0) await Rate(item, score);
+    }
+
+    internal sealed class Artwork
     {
         public string Id { get; set; } = "";
         public string ArtworkName { get; set; } = "";
@@ -229,35 +663,98 @@ public partial class MainPage : ContentPage
         public DateTime EventDate { get; set; }
         public double AverageRating { get; set; }
         public int RatingCount { get; set; }
+        public int Rank { get; set; }
     }
 }
 
-internal sealed class ImagePreviewPage : ContentPage
+internal sealed class ArtworkDetailPage : ContentPage
 {
     private readonly IReadOnlyList<string> photos;
+    private readonly MainPage.Artwork artwork;
+    private readonly Func<MainPage.Artwork, Task> rate;
     private int index;
     private readonly Image picture = new() { Aspect = Aspect.AspectFit, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
-    private readonly Label counter = new() { TextColor = Colors.White, FontSize = 14, HorizontalTextAlignment = TextAlignment.Center };
+    private readonly Label counter = new() { TextColor = ThemePalette.Get("OnSurfaceVariant"), FontSize = 13, HorizontalTextAlignment = TextAlignment.Center };
+    private readonly HorizontalStackLayout thumbnails = new() { Spacing = 8, Padding = new Thickness(4, 8) };
 
-    public ImagePreviewPage(IReadOnlyList<string> images)
+    public ArtworkDetailPage(MainPage.Artwork item, IReadOnlyList<string> images, Func<MainPage.Artwork, Task> rateArtwork)
     {
+        artwork = item;
         photos = images;
-        BackgroundColor = Color.FromArgb("#101416");
-        var close = new Button { Text = "✕", FontSize = 20, WidthRequest = 48, HeightRequest = 48, CornerRadius = 24, BackgroundColor = Color.FromArgb("#333A3D"), TextColor = Colors.White };
-        close.Clicked += async (_, _) => await Navigation.PopModalAsync();
-        var top = new Grid { Padding = new Thickness(16, 18), ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) } };
-        top.Add(new Label { Text = "ESER ÖN İZLEME", FontSize = 12, CharacterSpacing = 1.3, TextColor = Colors.White, VerticalTextAlignment = TextAlignment.Center });
-        top.Add(close, 1, 0);
+        rate = rateArtwork;
+        BackgroundColor = ThemePalette.Get("Background");
+        var close = MainPage.CenteredGlyph("‹", 32, 48, ThemePalette.Get("SurfaceContainer"));
+        AutomationProperties.SetName(close, "Sergiye geri dön");
+        close.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await Navigation.PopModalAsync()) });
+        var top = new Grid { Padding = new Thickness(16, 8), ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, ColumnSpacing = 10 };
+        top.Add(close);
+        top.Add(new Label { Text = "SERGİ DETAYI", FontSize = 12, CharacterSpacing = 1.3, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center }, 1, 0);
+        var count = new Label { Text = $"★ {item.AverageRating:0.0}  ·  {item.RatingCount} oy", FontSize = 12, TextColor = ThemePalette.Get("Primary"), VerticalTextAlignment = TextAlignment.Center };
+        top.Add(count, 2, 0);
+
+        var hero = new Grid { HeightRequest = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density >= 600 ? 420 : 300, ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) }, BackgroundColor = ThemePalette.Get("SurfaceContainer") };
+        hero.Add(picture, 0, 0); Grid.SetColumnSpan(picture, 3);
+        var previous = MainPage.CenteredGlyph("‹", 34, 48, ThemePalette.Get("Surface"));
+        previous.HeightRequest = 56; previous.IsVisible = photos.Count > 1; previous.VerticalOptions = LayoutOptions.Center; previous.Margin = new Thickness(8, 0);
+        var next = MainPage.CenteredGlyph("›", 34, 48, ThemePalette.Get("Surface"));
+        next.HeightRequest = 56; next.IsVisible = photos.Count > 1; next.VerticalOptions = LayoutOptions.Center; next.Margin = new Thickness(8, 0);
+        previous.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(() => Select((index + photos.Count - 1) % photos.Count)) });
+        next.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(() => Select((index + 1) % photos.Count)) });
+        hero.Add(previous, 0, 0); hero.Add(next, 2, 0);
         var swipe = new SwipeGestureRecognizer { Direction = SwipeDirection.Left | SwipeDirection.Right };
-        swipe.Swiped += (_, e) => { index = (index + (e.Direction == SwipeDirection.Left ? 1 : photos.Count - 1)) % photos.Count; Show(); };
+        swipe.Swiped += (_, e) => Select((index + (e.Direction == SwipeDirection.Left ? 1 : photos.Count - 1)) % photos.Count);
         picture.GestureRecognizers.Add(swipe);
-        var body = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star), new RowDefinition(GridLength.Auto) }, Padding = new Thickness(0, 0, 0, 24) };
-        body.Add(top);
-        body.Add(picture, 0, 1);
-        body.Add(counter, 0, 2);
+        var thumbScroll = new ScrollView { Orientation = ScrollOrientation.Horizontal, HeightRequest = 74, Content = thumbnails, HorizontalScrollBarVisibility = ScrollBarVisibility.Never };
+        BuildThumbnails();
+        var imageArea = new VerticalStackLayout { Spacing = 4 };
+        imageArea.Add(hero); imageArea.Add(counter); imageArea.Add(thumbScroll);
+
+        var metadata = new Label { Text = $"{item.ClassGrade}-{item.Section}  ·  {item.StudentName}  ·  {item.EventDate:dd.MM.yyyy}", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant") };
+        var description = new Label { Text = string.IsNullOrWhiteSpace(item.Description) ? "Bu eser için açıklama eklenmemiş." : item.Description, FontSize = 15, LineHeight = 1.4, TextColor = ThemePalette.Get("OnSurface") };
+        var ratingButton = new Button { Text = "★  Eseri puanla", HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("Primary"), TextColor = ThemePalette.Get("OnPrimary"), FontAttributes = FontAttributes.Bold };
+        ratingButton.Clicked += async (_, _) => await rate(artwork);
+        var info = new VerticalStackLayout { Padding = new Thickness(18, 16), Spacing = 12 };
+        info.Add(new Label { Text = item.ArtworkName, FontSize = 24, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
+        info.Add(metadata);
+        info.Add(new BoxView { HeightRequest = 1, Color = ThemePalette.Get("Outline"), Opacity = 0.25 });
+        info.Add(new Label { Text = "Eser hakkında", FontSize = 16, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
+        info.Add(description);
+        info.Add(ratingButton);
+
+        var width = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density;
+        View detailContent;
+        if (width >= 600)
+        {
+            var columns = new Grid { Padding = new Thickness(18, 8), ColumnDefinitions = { new ColumnDefinition(new GridLength(1.15, GridUnitType.Star)), new ColumnDefinition(new GridLength(0.85, GridUnitType.Star)) }, ColumnSpacing = 18 };
+            columns.Add(imageArea); columns.Add(new ScrollView { Content = info, VerticalScrollBarVisibility = ScrollBarVisibility.Never }, 1, 0);
+            detailContent = columns;
+        }
+        else
+        {
+            var stack = new VerticalStackLayout { Padding = new Thickness(14, 8, 14, 24), Spacing = 8 };
+            stack.Add(imageArea); stack.Add(info);
+            detailContent = new ScrollView { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Never };
+        }
+        var body = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star) } };
+        body.Add(top); body.Add(detailContent, 0, 1);
         Content = body;
         Show();
     }
 
-    private void Show() { picture.Source = photos[index]; counter.Text = photos.Count > 1 ? $"{index + 1} / {photos.Count}  ·  Kaydırarak gez" : "1 / 1"; }
+    private void BuildThumbnails()
+    {
+        thumbnails.Children.Clear();
+        for (var i = 0; i < photos.Count; i++)
+        {
+            var selected = i;
+            var thumb = new Border { WidthRequest = 58, HeightRequest = 58, Padding = 2, BackgroundColor = ThemePalette.Get("SurfaceContainer"), Stroke = i == index ? ThemePalette.Get("Primary") : ThemePalette.Get("Outline"), StrokeThickness = i == index ? 2 : 1, StrokeShape = new RoundRectangle { CornerRadius = 10 }, Content = new Image { Source = MainPage.CachedImageSource(photos[i]), Aspect = Aspect.AspectFill } };
+            var tap = new TapGestureRecognizer(); tap.Tapped += (_, _) => Select(selected); thumb.GestureRecognizers.Add(tap);
+            AutomationProperties.SetName(thumb, $"Görsel {i + 1}");
+            thumbnails.Add(thumb);
+        }
+    }
+
+    private void Select(int value) { index = value; Show(); BuildThumbnails(); }
+    private void Show() { picture.Source = MainPage.CachedImageSource(photos[index]); counter.Text = photos.Count > 1 ? $"Görsel {index + 1} / {photos.Count}  ·  küçük görsellere dokun veya kaydır" : "1 / 1"; }
+
 }
