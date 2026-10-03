@@ -691,22 +691,35 @@ internal sealed class RatingPickerPage : ContentPage
 {
     private readonly MainPage.Artwork artwork;
     private readonly Func<MainPage.Artwork, double, Task> submit;
-    private double value = 3.0;
+    private int value = 3;
     private readonly Label valueLabel;
+    private IDispatcherTimer? minusRepeat;
+    private IDispatcherTimer? plusRepeat;
+    private bool minusLongPress;
+    private bool plusLongPress;
 
     public RatingPickerPage(MainPage.Artwork item, Func<MainPage.Artwork, double, Task> submitRating)
     {
         artwork = item;
         submit = submitRating;
         BackgroundColor = Colors.Black.WithAlpha(0.38f);
-        valueLabel = new Label { Text = value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture), FontSize = 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, WidthRequest = 110 };
+        valueLabel = new Label { Text = value.ToString(), FontSize = 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, WidthRequest = 110 };
 
-        var minus = new Button { Text = "−", FontSize = 28, WidthRequest = 56, HeightRequest = 56, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSecondaryContainer") };
-        var plus = new Button { Text = "+", FontSize = 25, WidthRequest = 56, HeightRequest = 56, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSecondaryContainer") };
-        minus.Clicked += (_, _) => SetValue(value - 0.1);
-        plus.Clicked += (_, _) => SetValue(value + 0.1);
-        SemanticProperties.SetDescription(minus, "Puanı onda bir azalt");
-        SemanticProperties.SetDescription(plus, "Puanı onda bir artır");
+        Button MakeStepperButton(string glyph, string description)
+        {
+            var icon = new Label { Text = glyph, FontSize = glyph == "+" ? 30 : 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSecondaryContainer"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Margin = 0, Padding = 0, InputTransparent = true };
+            var face = new Border { WidthRequest = 56, HeightRequest = 56, Padding = 0, BackgroundColor = ThemePalette.Get("SecondaryContainer"), Stroke = ThemePalette.Get("OutlineVariant"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = icon, InputTransparent = true };
+            var hitTarget = new Button { Text = "", WidthRequest = 56, HeightRequest = 56, MinimumWidthRequest = 56, MinimumHeightRequest = 56, Padding = 0, Margin = 0, CornerRadius = 18, BackgroundColor = Colors.Transparent, TextColor = Colors.Transparent, BorderColor = Colors.Transparent, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
+            var hitArea = new Grid { WidthRequest = 56, HeightRequest = 56, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { face, hitTarget } };
+            AutomationProperties.SetName(hitTarget, description);
+            SemanticProperties.SetDescription(hitTarget, description);
+            return hitTarget;
+        }
+
+        var minus = MakeStepperButton("−", "Puanı bir azalt");
+        var plus = MakeStepperButton("+", "Puanı bir artır");
+        AttachHoldRepeat(minus, -1);
+        AttachHoldRepeat(plus, 1);
         var stepper = new HorizontalStackLayout { Spacing = 14, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { minus, valueLabel, plus } };
 
         var cancel = new Button { Text = "İptal", HeightRequest = 52, CornerRadius = 17, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), TextColor = ThemePalette.Get("OnSurface") };
@@ -716,7 +729,7 @@ internal sealed class RatingPickerPage : ContentPage
         {
             confirm.IsEnabled = false;
             confirm.Text = "Gönderiliyor…";
-            await submit(artwork, Math.Round(value, 1));
+            await submit(artwork, value);
             if (artwork.MyScore.HasValue) await Navigation.PopModalAsync();
             else { confirm.IsEnabled = true; confirm.Text = "Puanı gönder"; }
         };
@@ -724,7 +737,7 @@ internal sealed class RatingPickerPage : ContentPage
         var panel = new VerticalStackLayout { Padding = new Thickness(24), Spacing = 18, VerticalOptions = LayoutOptions.Center };
         panel.Add(new Label { Text = "Puanını belirle", FontSize = 22, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center });
         panel.Add(new Label { Text = artwork.ArtworkName, FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center, MaxLines = 2, LineBreakMode = LineBreakMode.TailTruncation });
-        panel.Add(new Label { Text = "0,0 – 5,0 arası · 0,1 puan adımı", FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
+        panel.Add(new Label { Text = "0 ile 5 arasında · her adımda 1 puan", FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
         panel.Add(stepper);
         panel.Add(new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 12, Children = { cancel, confirm } });
         Grid.SetColumn(confirm, 1);
@@ -733,10 +746,39 @@ internal sealed class RatingPickerPage : ContentPage
         Content = root;
     }
 
-    private void SetValue(double next)
+    private void SetValue(int next)
     {
-        value = Math.Clamp(Math.Round(next, 1), 0, 5);
-        valueLabel.Text = value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+        value = Math.Clamp(next, 0, 5);
+        valueLabel.Text = value.ToString();
+    }
+
+    private void AttachHoldRepeat(Button button, int delta)
+    {
+        var increases = delta > 0;
+        button.Pressed += (_, _) =>
+        {
+            if (increases) plusLongPress = false; else minusLongPress = false;
+            var timer = Dispatcher.CreateTimer();
+            if (increases) { plusRepeat?.Stop(); plusRepeat = timer; } else { minusRepeat?.Stop(); minusRepeat = timer; }
+            timer.Interval = TimeSpan.FromMilliseconds(420);
+            timer.Tick += (_, _) =>
+            {
+                if (increases) plusLongPress = true; else minusLongPress = true;
+                var next = value + delta;
+                if (next < 0 || next > 5) { timer.Stop(); return; }
+                SetValue(next);
+                timer.Interval = TimeSpan.FromMilliseconds(240);
+            };
+            timer.Start();
+        };
+        button.Released += (_, _) => { if (increases) plusRepeat?.Stop(); else minusRepeat?.Stop(); };
+        button.Clicked += (_, _) =>
+        {
+            var longPress = increases ? plusLongPress : minusLongPress;
+            if (!longPress) SetValue(value + delta);
+            if (increases) { plusRepeat?.Stop(); plusLongPress = false; }
+            else { minusRepeat?.Stop(); minusLongPress = false; }
+        };
     }
 }
 
