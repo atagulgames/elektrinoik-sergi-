@@ -29,7 +29,7 @@ public partial class MainPage : ContentPage
         identity.Add(new Label { Text = "E-SERGİ  /  YÖNETİM", FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = Colors.White });
         brand.Add(identity, 1, 0);
         var banner = new Border { Background = new LinearGradientBrush(new GradientStopCollection { new(Color.FromArgb("#172D3A"), 0f), new(Color.FromArgb("#234D46"), 1f) }, new Point(0, 0), new Point(1, 1)), Stroke = Colors.Transparent, StrokeShape = new RoundRectangle { CornerRadius = 0 }, Content = brand };
-        var bannerFrame = new Grid { HeightRequest = 77 };
+        var bannerFrame = new Grid { HeightRequest = 7 };
         bannerFrame.Add(banner);
         bannerFrame.Loaded += async (_, _) =>
         {
