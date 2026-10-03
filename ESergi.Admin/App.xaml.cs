@@ -7,6 +7,7 @@ public partial class App : Application
 	public App()
 	{
 		InitializeComponent();
+		ThemePalette.Initialize(this);
 	}
 
 	protected override Window CreateWindow(IActivationState? activationState)

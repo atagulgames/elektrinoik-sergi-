@@ -5,4 +5,6 @@
 *.suo
 *.pfx
 *.keystore
+*.jks
+signing-password.txt
 appsettings.Development.json

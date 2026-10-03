@@ -29,6 +29,8 @@ public partial class MainPage : ContentPage
     private IDispatcherTimer? waitPulseTimer;
     private bool hubConnecting;
     private Grid? waitOverlay;
+    private Image? startupBrand;
+    private bool initialLoadFinished;
     private Label? waitTitle;
     private Label? waitSubtitle;
     private ActivityIndicator? waitSpinner;
@@ -182,12 +184,17 @@ public partial class MainPage : ContentPage
         root.Add(scroll, 0, 1);
         root.Add(discoveryPage, 0, 1);
         root.Add(navigation, 0, 2);
-        waitTitle = new Label { Text = "Lütfen bekleyiniz", FontSize = 21, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center };
-        waitSubtitle = new Label { Text = "Bu işlem biraz uzun sürebilir.", FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center };
-        waitSpinner = new ActivityIndicator { IsRunning = true, Color = ThemePalette.Get("Primary"), WidthRequest = 48, HeightRequest = 48, HorizontalOptions = LayoutOptions.Center };
+        var screenHeight = DeviceDisplay.MainDisplayInfo.Height / DeviceDisplay.MainDisplayInfo.Density;
+        var brandHeight = Math.Clamp(screenHeight * 0.43, 150, 460);
+        var brandWidth = Math.Min(screenWidth - 36, brandHeight * 0.79);
+        startupBrand = new Image { Source = "startup_brand.png", Aspect = Aspect.AspectFit, WidthRequest = brandWidth, HeightRequest = brandHeight, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
+        waitTitle = new Label { Text = "Lütfen bekleyiniz", FontSize = 21, FontAttributes = FontAttributes.Bold, TextColor = Colors.White, HorizontalTextAlignment = TextAlignment.Center };
+        waitSubtitle = new Label { Text = "Bu işlem biraz uzun sürebilir.", FontSize = 14, TextColor = Colors.White.WithAlpha(0.78f), HorizontalTextAlignment = TextAlignment.Center };
+        waitSpinner = new ActivityIndicator { IsRunning = true, Color = Colors.White, WidthRequest = 56, HeightRequest = 56, HorizontalOptions = LayoutOptions.Center };
         SemanticProperties.SetDescription(waitSpinner, "Sunucudan sergi verileri bekleniyor");
-        var waitPanel = new Border { Padding = new Thickness(28, 24), BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeShape = new RoundRectangle { CornerRadius = 28 }, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Center, MaximumWidthRequest = 380, Content = new VerticalStackLayout { Spacing = 15, Children = { waitSpinner, waitTitle, waitSubtitle } } };
-        waitOverlay = new Grid { Padding = new Thickness(24), BackgroundColor = ThemePalette.Get("Scrim").WithAlpha(0.68f), IsVisible = true, Opacity = 0, ZIndex = 100, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Children = { waitPanel } };
+        var waitPanel = new VerticalStackLayout { Spacing = 8, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { waitSpinner, waitTitle, waitSubtitle } };
+        var loadingContent = new VerticalStackLayout { Padding = new Thickness(18), Spacing = 10, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Center, Children = { startupBrand, waitPanel } };
+        waitOverlay = new Grid { Padding = new Thickness(16), BackgroundColor = Colors.Black, IsVisible = true, Opacity = 1, ZIndex = 100, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Children = { loadingContent } };
         root.Add(waitOverlay);
         Grid.SetRow(waitOverlay, 0);
         Grid.SetColumn(waitOverlay, 0);
@@ -251,7 +258,18 @@ public partial class MainPage : ContentPage
         waitPulseTimer.Tick -= WaitPulseTick; waitPulseTimer.Tick += WaitPulseTick;
         if (waitPulseTimer.IsRunning) return;
         waitPulseTimer.Start();
-        _ = waitOverlay.FadeToAsync(1, 180, Easing.CubicOut);
+        if (!initialLoadFinished)
+        {
+            startupBrand!.IsVisible = true;
+            waitOverlay.BackgroundColor = Colors.Black;
+            waitOverlay.Opacity = 1;
+        }
+        else
+        {
+            startupBrand!.IsVisible = false;
+            waitOverlay.BackgroundColor = ThemePalette.Get("Scrim").WithAlpha(0.68f);
+            _ = waitOverlay.FadeToAsync(1, 140, Easing.CubicOut);
+        }
     }
 
     private void WaitPulseTick(object? sender, EventArgs e)
@@ -267,6 +285,8 @@ public partial class MainPage : ContentPage
         if (waitOverlay is null) return;
         waitOverlay.CancelAnimations();
         waitTitle?.CancelAnimations();
+        startupBrand!.IsVisible = false;
+        initialLoadFinished = true;
         waitOverlay.Opacity = 0; waitOverlay.IsVisible = false;
     }
 
@@ -695,7 +715,8 @@ internal sealed class RatingPickerPage : ContentPage
 {
     private readonly MainPage.Artwork artwork;
     private readonly Func<MainPage.Artwork, double, Task> submit;
-    private int value = 3;
+    // Store tenths as an integer to avoid floating-point drift while stepping.
+    private int valueTenths = 30;
     private readonly Label valueLabel;
     private IDispatcherTimer? minusRepeat;
     private IDispatcherTimer? plusRepeat;
@@ -707,21 +728,36 @@ internal sealed class RatingPickerPage : ContentPage
         artwork = item;
         submit = submitRating;
         BackgroundColor = Colors.Black.WithAlpha(0.38f);
-        valueLabel = new Label { Text = value.ToString(), FontSize = 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, WidthRequest = 110 };
+        valueLabel = new Label { Text = FormatValue(valueTenths), FontSize = 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("Primary"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, WidthRequest = 110 };
 
         Button MakeStepperButton(string glyph, string description)
         {
-            var icon = new Label { Text = glyph, FontSize = glyph == "+" ? 30 : 34, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSecondaryContainer"), HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Margin = 0, Padding = 0, InputTransparent = true };
-            var face = new Border { WidthRequest = 56, HeightRequest = 56, Padding = 0, BackgroundColor = ThemePalette.Get("SecondaryContainer"), Stroke = ThemePalette.Get("OutlineVariant"), StrokeThickness = 1, StrokeShape = new RoundRectangle { CornerRadius = 18 }, Content = icon, InputTransparent = true };
-            var hitTarget = new Button { Text = "", WidthRequest = 56, HeightRequest = 56, MinimumWidthRequest = 56, MinimumHeightRequest = 56, Padding = 0, Margin = 0, CornerRadius = 18, BackgroundColor = Colors.Transparent, TextColor = Colors.Transparent, BorderColor = Colors.Transparent, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
-            var hitArea = new Grid { WidthRequest = 56, HeightRequest = 56, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { face, hitTarget } };
-            AutomationProperties.SetName(hitTarget, description);
-            SemanticProperties.SetDescription(hitTarget, description);
-            return hitTarget;
+            var button = new Button
+            {
+                Text = glyph,
+                FontSize = glyph == "+" ? 30 : 34,
+                FontAttributes = FontAttributes.Bold,
+                WidthRequest = 56,
+                HeightRequest = 56,
+                MinimumWidthRequest = 56,
+                MinimumHeightRequest = 56,
+                Padding = 0,
+                Margin = 0,
+                CornerRadius = 18,
+                BackgroundColor = ThemePalette.Get("SecondaryContainer"),
+                TextColor = ThemePalette.Get("OnSecondaryContainer"),
+                BorderColor = ThemePalette.Get("OutlineVariant"),
+                BorderWidth = 1,
+                HorizontalOptions = LayoutOptions.Center,
+                VerticalOptions = LayoutOptions.Center
+            };
+            AutomationProperties.SetName(button, description);
+            SemanticProperties.SetDescription(button, description);
+            return button;
         }
 
-        var minus = MakeStepperButton("−", "Puanı bir azalt");
-        var plus = MakeStepperButton("+", "Puanı bir artır");
+        var minus = MakeStepperButton("−", "Puanı 0,1 azalt");
+        var plus = MakeStepperButton("+", "Puanı 0,1 artır");
         AttachHoldRepeat(minus, -1);
         AttachHoldRepeat(plus, 1);
         var stepper = new HorizontalStackLayout { Spacing = 14, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Children = { minus, valueLabel, plus } };
@@ -733,7 +769,7 @@ internal sealed class RatingPickerPage : ContentPage
         {
             confirm.IsEnabled = false;
             confirm.Text = "Gönderiliyor…";
-            await submit(artwork, value);
+            await submit(artwork, valueTenths / 10d);
             if (artwork.MyScore.HasValue) await Navigation.PopModalAsync();
             else { confirm.IsEnabled = true; confirm.Text = "Puanı gönder"; }
         };
@@ -741,7 +777,7 @@ internal sealed class RatingPickerPage : ContentPage
         var panel = new VerticalStackLayout { Padding = new Thickness(24), Spacing = 18, VerticalOptions = LayoutOptions.Center };
         panel.Add(new Label { Text = "Puanını belirle", FontSize = 22, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface"), HorizontalTextAlignment = TextAlignment.Center });
         panel.Add(new Label { Text = artwork.ArtworkName, FontSize = 14, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center, MaxLines = 2, LineBreakMode = LineBreakMode.TailTruncation });
-        panel.Add(new Label { Text = "0 ile 5 arasında · her adımda 1 puan", FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
+        panel.Add(new Label { Text = "0,0 ile 5,0 arasında · adım: 0,1 puan", FontSize = 12, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.Center });
         panel.Add(stepper);
         panel.Add(new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 12, Children = { cancel, confirm } });
         Grid.SetColumn(confirm, 1);
@@ -750,10 +786,12 @@ internal sealed class RatingPickerPage : ContentPage
         Content = root;
     }
 
-    private void SetValue(int next)
+    private static string FormatValue(int tenths) => (tenths / 10d).ToString("0.0", System.Globalization.CultureInfo.CurrentCulture);
+
+    private void SetValue(int nextTenths)
     {
-        value = Math.Clamp(next, 0, 5);
-        valueLabel.Text = value.ToString();
+        valueTenths = Math.Clamp(nextTenths, 0, 50);
+        valueLabel.Text = FormatValue(valueTenths);
     }
 
     private void AttachHoldRepeat(Button button, int delta)
@@ -768,8 +806,8 @@ internal sealed class RatingPickerPage : ContentPage
             timer.Tick += (_, _) =>
             {
                 if (increases) plusLongPress = true; else minusLongPress = true;
-                var next = value + delta;
-                if (next < 0 || next > 5) { timer.Stop(); return; }
+                var next = valueTenths + delta;
+                if (next < 0 || next > 50) { timer.Stop(); return; }
                 SetValue(next);
                 timer.Interval = TimeSpan.FromMilliseconds(240);
             };
@@ -779,7 +817,7 @@ internal sealed class RatingPickerPage : ContentPage
         button.Clicked += (_, _) =>
         {
             var longPress = increases ? plusLongPress : minusLongPress;
-            if (!longPress) SetValue(value + delta);
+            if (!longPress) SetValue(valueTenths + delta);
             if (increases) { plusRepeat?.Stop(); plusLongPress = false; }
             else { minusRepeat?.Stop(); minusLongPress = false; }
         };

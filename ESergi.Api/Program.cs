@@ -72,7 +72,11 @@ app.MapPost("/api/artworks", async (HttpRequest req, IConfiguration cfg, IHubCon
     if (!Admin(req, cfg)) return Results.Unauthorized();
     if (cloud is null) return Results.Problem("Cloudinary ayarları yapılmamış.", statusCode: 503);
     if (!req.HasFormContentType) return Results.BadRequest("multipart/form-data gerekli.");
-    var form = await req.ReadFormAsync(cancellationToken); var images = form.Files.GetFiles("images").ToList();
+    IFormCollection form;
+    try { form = await req.ReadFormAsync(cancellationToken); }
+    catch (InvalidDataException) { return Results.BadRequest("Gönderilen form verisi geçersiz veya eksik."); }
+    catch (BadHttpRequestException) { return Results.BadRequest("Gönderilen form verisi okunamadı."); }
+    var images = form.Files.GetFiles("images").ToList();
     if (images.Count == 0 && form.Files.GetFile("image") is { } legacyImage) images.Add(legacyImage);
     if (images.Count is < 1 or > 3 || images.Any(x => x.Length == 0 || x.Length > 10 * 1024 * 1024)) return Results.BadRequest("1-3 arası, her biri 10 MB altındaki görselleri seçin.");
     var grade = form["classGrade"].ToString(); var section = form["section"].ToString().ToUpperInvariant();
@@ -92,7 +96,11 @@ app.MapPut("/api/artworks/{id}", async (string id, HttpRequest req, IConfigurati
 {
     if (!Admin(req, cfg)) return Results.Unauthorized();
     var item = await artworks.Find(x => x.Id == id).FirstOrDefaultAsync(); if (item is null) return Results.NotFound();
-    var f = await req.ReadFormAsync(cancellationToken);
+    if (!req.HasFormContentType) return Results.BadRequest("multipart/form-data gerekli.");
+    IFormCollection f;
+    try { f = await req.ReadFormAsync(cancellationToken); }
+    catch (InvalidDataException) { return Results.BadRequest("Gönderilen form verisi geçersiz veya eksik."); }
+    catch (BadHttpRequestException) { return Results.BadRequest("Gönderilen form verisi okunamadı."); }
     var newTitle = f["artworkName"].ToString().Trim(); var newStudent = f["studentName"].ToString().Trim(); var newDescription = f["description"].ToString().Trim();
     if (string.IsNullOrWhiteSpace(newTitle) || string.IsNullOrWhiteSpace(newStudent)) return Results.BadRequest("Eser adı ve öğrenci adı zorunludur.");
     if (newDescription.Length > Math.Max(120, item.Description.Length)) return Results.BadRequest($"Açıklama en fazla {Math.Max(120, item.Description.Length)} karakter olabilir.");
