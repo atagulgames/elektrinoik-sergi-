@@ -38,8 +38,8 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         BackgroundColor = ThemePalette.Get("Background");
         var headerWidth = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density;
-        var headerLogoSize = headerWidth < 380 ? 36d : 44d;
-        var schoolMarkSize = headerWidth < 380 ? 44d : 56d;
+        var headerLogoSize = headerWidth < 340 ? 30d : headerWidth < 380 ? 34d : 40d;
+        var schoolMarkSize = headerWidth < 340 ? 36d : headerWidth < 380 ? 40d : 48d;
         device = GetStableDeviceId();
         Preferences.Default.Set("esergi-device", device);
         
@@ -75,14 +75,14 @@ public partial class MainPage : ContentPage
         brand.Add(brandText);
 
         // Equal side columns keep the education emblem precisely centered even on narrow screens.
-        var top = new Grid { Padding = new Thickness(16, 6), BackgroundColor = ThemePalette.Get("Surface"), RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, HeightRequest = 96, RowSpacing = 0 };
+        var top = new Grid { Padding = new Thickness(headerWidth < 360 ? 12 : 16, 5), BackgroundColor = ThemePalette.Get("Surface"), RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, HeightRequest = 84, RowSpacing = 0 };
         top.Add(brand, 0, 0);
         var schoolMark = new Border { WidthRequest = schoolMarkSize, HeightRequest = schoolMarkSize, Padding = 3, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeThickness = 0.5, StrokeShape = new RoundRectangle { CornerRadius = 18 }, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Content = new Image { Source = "meb_crest.png", Aspect = Aspect.AspectFit } };
         AutomationProperties.SetName(schoolMark, "Millî Eğitim Bakanlığı arması");
         top.Add(schoolMark, 1, 0);
-        var developer = new Label { Text = "DEVELOPER  ·  Ahmet Mete ATAGÜL", FontSize = 9, CharacterSpacing = 0.4, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.End, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation, Margin = new Thickness(0, 0, 2, 0) };
+        var developer = new Label { Text = "DEVELOPER  ·  Ahmet Mete ATAGÜL", FontSize = headerWidth < 340 ? 7 : headerWidth < 380 ? 8 : 9, CharacterSpacing = 0.2, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurfaceVariant"), HorizontalTextAlignment = TextAlignment.End, VerticalTextAlignment = TextAlignment.Center, LineBreakMode = LineBreakMode.TailTruncation, Margin = new Thickness(0, 0, 2, 0), MaxLines = 1 };
         top.Add(developer, 0, 1); Grid.SetColumnSpan(developer, 3);
-        var themeButton = CenteredGlyph("⚙", 24, 52, ThemePalette.Get("SurfaceContainer"));
+        var themeButton = CenteredGlyph("⚙", 21, headerWidth < 360 ? 44 : 48, ThemePalette.Get("SurfaceContainer"));
         AutomationProperties.SetName(themeButton, "Tema seçenekleri");
         themeButton.GestureRecognizers.Add(new TapGestureRecognizer { Command = new Command(async () => await ThemePalette.Choose(Application.Current!)) });
         var themeSlot = new Grid { HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Children = { themeButton } };
