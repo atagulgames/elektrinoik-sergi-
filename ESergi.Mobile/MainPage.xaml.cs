@@ -187,8 +187,12 @@ public partial class MainPage : ContentPage
         waitSpinner = new ActivityIndicator { IsRunning = true, Color = ThemePalette.Get("Primary"), WidthRequest = 48, HeightRequest = 48, HorizontalOptions = LayoutOptions.Center };
         SemanticProperties.SetDescription(waitSpinner, "Sunucudan sergi verileri bekleniyor");
         var waitPanel = new Border { Padding = new Thickness(28, 24), BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeShape = new RoundRectangle { CornerRadius = 28 }, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Center, MaximumWidthRequest = 380, Content = new VerticalStackLayout { Spacing = 15, Children = { waitSpinner, waitTitle, waitSubtitle } } };
-        waitOverlay = new Grid { Padding = 28, BackgroundColor = ThemePalette.Get("Scrim").WithAlpha(0.58f), IsVisible = true, Opacity = 0, ZIndex = 20, Children = { waitPanel } };
+        waitOverlay = new Grid { Padding = new Thickness(24), BackgroundColor = ThemePalette.Get("Scrim").WithAlpha(0.68f), IsVisible = true, Opacity = 0, ZIndex = 100, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill, Children = { waitPanel } };
         root.Add(waitOverlay);
+        Grid.SetRow(waitOverlay, 0);
+        Grid.SetColumn(waitOverlay, 0);
+        Grid.SetRowSpan(waitOverlay, 3);
+        Grid.SetColumnSpan(waitOverlay, 1);
         Content = root;
         ShowWait("Lütfen bekleyiniz", "Bu işlem biraz uzun sürebilir.");
         _ = WarmServer();
