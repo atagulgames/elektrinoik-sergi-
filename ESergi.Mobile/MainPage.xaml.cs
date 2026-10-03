@@ -38,8 +38,8 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         BackgroundColor = ThemePalette.Get("Background");
         var headerWidth = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density;
-        var headerLogoSize = headerWidth < 340 ? 30d : headerWidth < 380 ? 34d : 40d;
-        var schoolMarkSize = headerWidth < 340 ? 36d : headerWidth < 380 ? 40d : 48d;
+        var headerLogoSize = headerWidth < 340 ? 28d : headerWidth < 380 ? 32d : 38d;
+        var schoolMarkSize = headerWidth < 340 ? 32d : headerWidth < 380 ? 36d : 42d;
         device = GetStableDeviceId();
         Preferences.Default.Set("esergi-device", device);
         
@@ -75,7 +75,7 @@ public partial class MainPage : ContentPage
         brand.Add(brandText);
 
         // Equal side columns keep the education emblem precisely centered even on narrow screens.
-        var top = new Grid { Padding = new Thickness(headerWidth < 360 ? 12 : 16, 5), BackgroundColor = ThemePalette.Get("Surface"), RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, HeightRequest = 84, RowSpacing = 0 };
+        var top = new Grid { Padding = new Thickness(headerWidth < 360 ? 10 : 14, 4), BackgroundColor = ThemePalette.Get("Surface"), RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) }, HeightRequest = 76, RowSpacing = 0 };
         top.Add(brand, 0, 0);
         var schoolMark = new Border { WidthRequest = schoolMarkSize, HeightRequest = schoolMarkSize, Padding = 3, BackgroundColor = ThemePalette.Get("SurfaceContainerHigh"), Stroke = ThemePalette.Get("Outline"), StrokeThickness = 0.5, StrokeShape = new RoundRectangle { CornerRadius = 18 }, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center, Content = new Image { Source = "meb_crest.png", Aspect = Aspect.AspectFit } };
         AutomationProperties.SetName(schoolMark, "Millî Eğitim Bakanlığı arması");

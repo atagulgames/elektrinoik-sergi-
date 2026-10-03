@@ -27,7 +27,7 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         BackgroundColor = ThemePalette.Get("Background");
         var headerWidth = DeviceDisplay.MainDisplayInfo.Width / DeviceDisplay.MainDisplayInfo.Density;
-        var schoolMarkSize = headerWidth < 340 ? 36d : headerWidth < 380 ? 40d : 48d;
+        var schoolMarkSize = headerWidth < 340 ? 32d : headerWidth < 380 ? 36d : 42d;
 
         // Fixed brand banner: the scrollable dashboard never covers it.
         var brand = new Grid { Padding = new Thickness(headerWidth < 360 ? 12 : 16, 6), ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) } };
@@ -46,7 +46,7 @@ public partial class MainPage : ContentPage
         var themeSlot = new Grid { Children = { themeButton }, HorizontalOptions = LayoutOptions.Fill, VerticalOptions = LayoutOptions.Fill };
         brand.Add(themeSlot, 2, 0);
         var banner = new Border { BackgroundColor = ThemePalette.Get("SurfaceContainer"), Stroke = Colors.Transparent, StrokeShape = new RoundRectangle { CornerRadius = 0 }, Content = brand };
-        var bannerFrame = new Grid { HeightRequest = 82 };
+        var bannerFrame = new Grid { HeightRequest = 72 };
         bannerFrame.Add(banner);
 
         var scroll = new ScrollView { Content = pageBody, VerticalScrollBarVisibility = ScrollBarVisibility.Never };
