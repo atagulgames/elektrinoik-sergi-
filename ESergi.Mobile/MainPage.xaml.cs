@@ -13,8 +13,9 @@ public partial class MainPage : ContentPage
     private readonly Button loadMoreButton = new() { Text = "Daha fazla sergi göster", HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSurface"), IsVisible = false };
     private readonly Label countLabel = new() { Text = "Sergi yükleniyor…", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center };
     private const string AllGradesOption = "Tüm sınıflar";
+    private const string AllSectionsOption = "Tüm şubeler";
     private readonly Picker grade = new() { Title = "Sınıf seç", ItemsSource = new[] { AllGradesOption, "9", "10", "11", "12" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
-    private readonly Picker section = new() { Title = "Tüm şubeler", ItemsSource = new[] { "A", "B", "C", "D", "E", "F", "G" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
+    private readonly Picker section = new() { Title = "Şube seç", ItemsSource = new[] { AllSectionsOption, "A", "B", "C", "D", "E", "F", "G" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
     private readonly Button allExhibitionsButton = new() { Text = "◉  Tüm sergileri göster", HeightRequest = 48, CornerRadius = 16, BackgroundColor = ThemePalette.Get("SurfaceContainer"), TextColor = ThemePalette.Get("OnSurface"), FontAttributes = FontAttributes.Bold };
     private bool allExhibitions;
     private HubConnection? hub;
@@ -103,7 +104,10 @@ public partial class MainPage : ContentPage
         grade.SelectedItem = string.IsNullOrWhiteSpace(savedGrade) || !new[] { "9", "10", "11", "12" }.Contains(savedGrade)
             ? AllGradesOption
             : savedGrade;
-        section.SelectedItem = Preferences.Default.Get("esergi-filter-section", "");
+        var savedSection = Preferences.Default.Get("esergi-filter-section", "");
+        section.SelectedItem = string.IsNullOrWhiteSpace(savedSection) || !new[] { "A", "B", "C", "D", "E", "F", "G" }.Contains(savedSection)
+            ? AllSectionsOption
+            : savedSection;
         allExhibitions = Preferences.Default.Get("esergi-filter-all", false);
         UpdateFilterControls();
         allExhibitionsButton.Clicked += async (_, _) =>
@@ -119,7 +123,12 @@ public partial class MainPage : ContentPage
             Preferences.Default.Set("esergi-filter-grade", selectedGrade == AllGradesOption ? "" : selectedGrade ?? "");
             await Load();
         };
-        section.SelectedIndexChanged += async (_, _) => { Preferences.Default.Set("esergi-filter-section", section.SelectedItem?.ToString() ?? ""); await Load(); };
+        section.SelectedIndexChanged += async (_, _) =>
+        {
+            var selectedSection = section.SelectedItem?.ToString();
+            Preferences.Default.Set("esergi-filter-section", selectedSection == AllSectionsOption ? "" : selectedSection ?? "");
+            await Load();
+        };
 
         var heading = new VerticalStackLayout { Spacing = 5, Margin = new Thickness(0, 9, 0, 0) };
         heading.Add(new Label { Text = "Sanat, her yerde.", FontSize = 27, FontAttributes = FontAttributes.Bold, TextColor = ThemePalette.Get("OnSurface") });
@@ -494,7 +503,7 @@ public partial class MainPage : ContentPage
         if (!allExhibitions)
         {
             if (grade.SelectedItem is string g && g != AllGradesOption) query.Add("grade=" + Uri.EscapeDataString(g));
-            if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
+            if (section.SelectedItem is string s && s != AllSectionsOption) query.Add("section=" + Uri.EscapeDataString(s));
         }
         using var response = await Client.GetAsync($"{Api}/api/artworks?{string.Join("&", query)}");
         response.EnsureSuccessStatusCode();
