@@ -12,8 +12,11 @@ public partial class MainPage : ContentPage
     private readonly Grid gallery = new() { ColumnSpacing = 12, RowSpacing = 14, Padding = new Thickness(1, 0, 1, 20) };
     private readonly Button loadMoreButton = new() { Text = "Daha fazla sergi göster", HeightRequest = 52, CornerRadius = 18, BackgroundColor = ThemePalette.Get("SecondaryContainer"), TextColor = ThemePalette.Get("OnSurface"), IsVisible = false };
     private readonly Label countLabel = new() { Text = "Sergi yükleniyor…", FontSize = 13, TextColor = ThemePalette.Get("OnSurfaceVariant"), VerticalTextAlignment = TextAlignment.Center };
-    private readonly Picker grade = new() { Title = "Tüm sınıflar", ItemsSource = new[] { "9", "10", "11", "12" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
+    private const string AllGradesOption = "Tüm sınıflar";
+    private readonly Picker grade = new() { Title = "Sınıf seç", ItemsSource = new[] { AllGradesOption, "9", "10", "11", "12" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
     private readonly Picker section = new() { Title = "Tüm şubeler", ItemsSource = new[] { "A", "B", "C", "D", "E", "F", "G" }, TextColor = ThemePalette.Get("OnSurface"), BackgroundColor = ThemePalette.Get("SurfaceContainer") };
+    private readonly Button allExhibitionsButton = new() { Text = "◉  Tüm sergileri göster", HeightRequest = 48, CornerRadius = 16, BackgroundColor = ThemePalette.Get("SurfaceContainer"), TextColor = ThemePalette.Get("OnSurface"), FontAttributes = FontAttributes.Bold };
+    private bool allExhibitions;
     private HubConnection? hub;
     private readonly string device;
     private readonly List<IDispatcherTimer> carouselTimers = [];
@@ -91,12 +94,31 @@ public partial class MainPage : ContentPage
         themeButton.HorizontalOptions = LayoutOptions.End; themeButton.VerticalOptions = LayoutOptions.Center;
         top.Add(themeSlot, 2, 0);
 
-        var filters = new Grid { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 9 };
+        var filters = new Grid { RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Auto) }, ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) }, ColumnSpacing = 9, RowSpacing = 8 };
         filters.Add(StyleFilter(grade));
         filters.Add(StyleFilter(section), 1, 0);
-        grade.SelectedItem = Preferences.Default.Get("esergi-filter-grade", "");
+        filters.Add(allExhibitionsButton, 0, 1);
+        Grid.SetColumnSpan(allExhibitionsButton, 2);
+        var savedGrade = Preferences.Default.Get("esergi-filter-grade", "");
+        grade.SelectedItem = string.IsNullOrWhiteSpace(savedGrade) || !new[] { "9", "10", "11", "12" }.Contains(savedGrade)
+            ? AllGradesOption
+            : savedGrade;
         section.SelectedItem = Preferences.Default.Get("esergi-filter-section", "");
-        grade.SelectedIndexChanged += async (_, _) => { Preferences.Default.Set("esergi-filter-grade", grade.SelectedItem?.ToString() ?? ""); await Load(); };
+        allExhibitions = Preferences.Default.Get("esergi-filter-all", false);
+        UpdateFilterControls();
+        allExhibitionsButton.Clicked += async (_, _) =>
+        {
+            allExhibitions = !allExhibitions;
+            Preferences.Default.Set("esergi-filter-all", allExhibitions);
+            UpdateFilterControls();
+            await Load();
+        };
+        grade.SelectedIndexChanged += async (_, _) =>
+        {
+            var selectedGrade = grade.SelectedItem?.ToString();
+            Preferences.Default.Set("esergi-filter-grade", selectedGrade == AllGradesOption ? "" : selectedGrade ?? "");
+            await Load();
+        };
         section.SelectedIndexChanged += async (_, _) => { Preferences.Default.Set("esergi-filter-section", section.SelectedItem?.ToString() ?? ""); await Load(); };
 
         var heading = new VerticalStackLayout { Spacing = 5, Margin = new Thickness(0, 9, 0, 0) };
@@ -214,6 +236,18 @@ public partial class MainPage : ContentPage
         StrokeShape = new RoundRectangle { CornerRadius = 14 },
         Content = picker
     };
+
+    private void UpdateFilterControls()
+    {
+        grade.IsEnabled = section.IsEnabled = !allExhibitions;
+        grade.Opacity = section.Opacity = allExhibitions ? 0.42 : 1;
+        allExhibitionsButton.Text = allExhibitions ? "✓  Tüm sergiler gösteriliyor" : "◉  Tüm sergileri göster";
+        allExhibitionsButton.BackgroundColor = ThemePalette.Get(allExhibitions ? "SecondaryContainer" : "SurfaceContainer");
+        allExhibitionsButton.TextColor = ThemePalette.Get("OnSurface");
+        SemanticProperties.SetDescription(allExhibitionsButton, allExhibitions
+            ? "Tüm sergiler açık. Sınıf ve şube filtrelerini yeniden kullanmak için kapatın."
+            : "Sınıf ve şube filtrelerini devre dışı bırakıp bütün sergileri göster.");
+    }
 
     private static Border CreateDiscoveryOrb(double size, double opacity) => new()
     {
@@ -457,8 +491,11 @@ public partial class MainPage : ContentPage
     {
         var query = new List<string> { $"skip={skip}", $"take={PageSize}" };
         query.Add("deviceId=" + Uri.EscapeDataString(device));
-        if (grade.SelectedItem is string g) query.Add("grade=" + Uri.EscapeDataString(g));
-        if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
+        if (!allExhibitions)
+        {
+            if (grade.SelectedItem is string g && g != AllGradesOption) query.Add("grade=" + Uri.EscapeDataString(g));
+            if (section.SelectedItem is string s) query.Add("section=" + Uri.EscapeDataString(s));
+        }
         using var response = await Client.GetAsync($"{Api}/api/artworks?{string.Join("&", query)}");
         response.EnsureSuccessStatusCode();
         var rows = await response.Content.ReadFromJsonAsync<List<Artwork>>() ?? [];
